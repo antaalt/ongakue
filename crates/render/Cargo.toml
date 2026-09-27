@@ -1,0 +1,15 @@
+[package]
+name = "render"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+wgpu.workspace = true
+log.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+# WebGPU when the browser supports it, WebGL2 otherwise.
+wgpu = { workspace = true, features = ["webgpu", "webgl"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+wgpu = { workspace = true, features = ["dx12", "metal", "vulkan"] }

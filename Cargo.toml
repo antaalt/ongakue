@@ -1,6 +1,17 @@
-[package]
-name = "ongakue"
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
 
-[dependencies]
+[workspace.dependencies]
+render = { path = "crates/render" }
+wgpu = { version = "30", default-features = false, features = ["std", "wgsl"] }
+winit = "0.30"
+log = "0.4"
+
+[profile.release]
+opt-level = "s"
+lto = true
