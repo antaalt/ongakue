@@ -73,7 +73,8 @@ impl Renderer {
         self.surface.configure(&self.device, &self.config);
     }
 
-    pub fn render(&mut self) {
+    /// `level` is the current loudness, 0..1.
+    pub fn render(&mut self, level: f32) {
         let (frame, suboptimal) = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame) => (frame, false),
             wgpu::CurrentSurfaceTexture::Suboptimal(frame) => (frame, true),
@@ -88,13 +89,15 @@ impl Renderer {
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
-        // Placeholder until the audio drives the visuals: slowly cycle the hue.
+        // Placeholder until the spectrum drives the visuals: slowly cycle
+        // the hue, with brightness following the loudness.
         let t = self.frame as f64 / 60.0;
         self.frame += 1;
+        let brightness = 0.1 + 0.9 * level as f64;
         let color = wgpu::Color {
-            r: 0.5 + 0.5 * (t * 0.7).sin(),
-            g: 0.5 + 0.5 * (t * 0.7 + 2.1).sin(),
-            b: 0.5 + 0.5 * (t * 0.7 + 4.2).sin(),
+            r: brightness * (0.5 + 0.5 * (t * 0.7).sin()),
+            g: brightness * (0.5 + 0.5 * (t * 0.7 + 2.1).sin()),
+            b: brightness * (0.5 + 0.5 * (t * 0.7 + 4.2).sin()),
             a: 1.0,
         };
 

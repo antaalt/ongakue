@@ -1,3 +1,5 @@
+mod audio;
+
 use std::sync::Arc;
 
 use render::Renderer;
@@ -15,6 +17,10 @@ struct App {
     proxy: EventLoopProxy<UserEvent>,
     window: Option<Arc<Window>>,
     renderer: Option<Renderer>,
+    audio: audio::Backend,
+    samples: Box<[f32; audio::SAMPLE_COUNT]>,
+    /// Smoothed loudness, 0..1. Temporary until the spectrum analysis lands.
+    level: f32,
 }
 
 impl ApplicationHandler<UserEvent> for App {
@@ -68,8 +74,15 @@ impl ApplicationHandler<UserEvent> for App {
                 }
             }
             WindowEvent::RedrawRequested => {
+                self.audio.latest_samples(&mut self.samples);
+                let rms = (self.samples.iter().map(|s| s * s).sum::<f32>()
+                    / self.samples.len() as f32)
+                    .sqrt();
+                // Fast attack, slow decay.
+                self.level = (rms * 4.0).min(1.0).max(self.level * 0.92);
+
                 if let Some(renderer) = &mut self.renderer {
-                    renderer.render();
+                    renderer.render(self.level);
                 }
                 // On the web this schedules the next requestAnimationFrame.
                 if let Some(window) = &self.window {
@@ -95,6 +108,9 @@ fn main() {
         proxy: event_loop.create_proxy(),
         window: None,
         renderer: None,
+        audio: audio::Backend::new().expect("failed to initialize audio"),
+        samples: Box::new([0.0; audio::SAMPLE_COUNT]),
+        level: 0.0,
     };
 
     #[cfg(target_arch = "wasm32")]
