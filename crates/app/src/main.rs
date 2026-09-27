@@ -4,9 +4,11 @@ use std::sync::Arc;
 
 use analysis::Analyzer;
 use render::Renderer;
+use web_time::Instant;
 use winit::application::ApplicationHandler;
-use winit::event::WindowEvent;
+use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy};
+use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowId};
 
 /// Sent back to the event loop once the (async) GPU setup is done.
@@ -21,6 +23,16 @@ struct App {
     audio: audio::Backend,
     samples: Box<[f32; audio::SAMPLE_COUNT]>,
     analyzer: Analyzer,
+    start: Instant,
+    last_frame: Instant,
+}
+
+impl App {
+    fn next_visual(&mut self) {
+        if let Some(renderer) = &mut self.renderer {
+            renderer.next_visual();
+        }
+    }
 }
 
 impl ApplicationHandler<UserEvent> for App {
@@ -73,12 +85,29 @@ impl ApplicationHandler<UserEvent> for App {
                     renderer.resize(size.width, size.height);
                 }
             }
+            WindowEvent::MouseInput {
+                state: ElementState::Pressed,
+                button: MouseButton::Left,
+                ..
+            } => self.next_visual(),
+            WindowEvent::KeyboardInput { event, .. }
+                if event.state == ElementState::Pressed
+                    && !event.repeat
+                    && event.logical_key == Key::Named(NamedKey::Space) =>
+            {
+                self.next_visual()
+            }
             WindowEvent::RedrawRequested => {
+                let now = Instant::now();
+                // Clamped, so a long pause (e.g. a hidden tab) doesn't make a jump.
+                let dt = (now - self.last_frame).as_secs_f32().min(0.1);
+                self.last_frame = now;
+
                 self.audio.latest_samples(&mut self.samples);
-                let spectrum = self.analyzer.process(&self.samples[..]);
+                let spectrum = self.analyzer.process(&self.samples[..], dt);
 
                 if let Some(renderer) = &mut self.renderer {
-                    renderer.render(spectrum);
+                    renderer.render(spectrum, (now - self.start).as_secs_f32());
                 }
                 // On the web this schedules the next requestAnimationFrame.
                 if let Some(window) = &self.window {
@@ -108,6 +137,8 @@ fn main() {
         analyzer: Analyzer::new(audio.sample_rate(), audio::SAMPLE_COUNT),
         audio,
         samples: Box::new([0.0; audio::SAMPLE_COUNT]),
+        start: Instant::now(),
+        last_frame: Instant::now(),
     };
 
     #[cfg(target_arch = "wasm32")]

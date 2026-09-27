@@ -10,6 +10,11 @@ Live version: https://antaalt.github.io/ongakue/ (deployed from `main` by GitHub
 - `crates/render`: wgpu renderer, independent of windowing and audio
 - `crates/app`: entry point, window and event loop (winit)
 
+## Controls
+
+- Pick an audio file, then press **Play**
+- Click the visual or press **Space** to switch visuals
+
 ## Running
 
 Web (requires [trunk](https://trunkrs.dev) and the `wasm32-unknown-unknown` target):

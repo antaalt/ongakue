@@ -4,13 +4,27 @@
 use analysis::{BAND_COUNT, Spectrum};
 use bytemuck::{Pod, Zeroable};
 
-/// Mirrors `Uniforms` in the shader.
+/// Code shared by all visuals, prepended to each of them.
+const COMMON_SHADER: &str = include_str!("shaders/common.wgsl");
+
+/// Each visual is a fragment shader, cycled through with [`Renderer::next_visual`].
+const VISUALS: &[(&str, &str)] = &[
+    ("radial", include_str!("shaders/radial.wgsl")),
+    ("bars", include_str!("shaders/bars.wgsl")),
+];
+
+/// Mirrors `Uniforms` in `common.wgsl`.
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct Uniforms {
     bands: [[f32; 4]; BAND_COUNT / 4],
     resolution: [f32; 2],
-    _padding: [f32; 2],
+    time: f32,
+    beat: f32,
+    bass: f32,
+    mid: f32,
+    treble: f32,
+    _padding: f32,
 }
 
 pub struct Renderer {
@@ -18,7 +32,8 @@ pub struct Renderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
-    pipeline: wgpu::RenderPipeline,
+    pipelines: Vec<wgpu::RenderPipeline>,
+    visual: usize,
     uniform_buffer: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
 }
@@ -100,40 +115,49 @@ impl Renderer {
             }],
         });
 
-        let shader = device.create_shader_module(wgpu::include_wgsl!("shaders/bars.wgsl"));
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("bars"),
+            label: Some("visuals"),
             bind_group_layouts: &[Some(&bind_group_layout)],
             ..Default::default()
         });
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("bars"),
-            layout: Some(&layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                compilation_options: Default::default(),
-                buffers: &[],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                compilation_options: Default::default(),
-                targets: &[Some(config.format.into())],
-            }),
-            primitive: Default::default(),
-            depth_stencil: None,
-            multisample: Default::default(),
-            multiview_mask: None,
-            cache: None,
-        });
+        let pipelines = VISUALS
+            .iter()
+            .map(|(name, source)| {
+                let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some(name),
+                    source: wgpu::ShaderSource::Wgsl(format!("{COMMON_SHADER}\n{source}").into()),
+                });
+                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some(name),
+                    layout: Some(&layout),
+                    vertex: wgpu::VertexState {
+                        module: &shader,
+                        entry_point: Some("vs_main"),
+                        compilation_options: Default::default(),
+                        buffers: &[],
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: &shader,
+                        entry_point: Some("fs_main"),
+                        compilation_options: Default::default(),
+                        targets: &[Some(config.format.into())],
+                    }),
+                    primitive: Default::default(),
+                    depth_stencil: None,
+                    multisample: Default::default(),
+                    multiview_mask: None,
+                    cache: None,
+                })
+            })
+            .collect();
 
         Self {
             surface,
             device,
             queue,
             config,
-            pipeline,
+            pipelines,
+            visual: 0,
             uniform_buffer,
             bind_group,
         }
@@ -148,7 +172,14 @@ impl Renderer {
         self.surface.configure(&self.device, &self.config);
     }
 
-    pub fn render(&mut self, spectrum: &Spectrum) {
+    /// Switches to the next visual, wrapping around.
+    pub fn next_visual(&mut self) {
+        self.visual = (self.visual + 1) % self.pipelines.len();
+        log::info!("visual: {}", VISUALS[self.visual].0);
+    }
+
+    /// `time` is in seconds since start, and drives the animations.
+    pub fn render(&mut self, spectrum: &Spectrum, time: f32) {
         let (frame, suboptimal) = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame) => (frame, false),
             wgpu::CurrentSurfaceTexture::Suboptimal(frame) => (frame, true),
@@ -166,7 +197,12 @@ impl Renderer {
         let mut uniforms = Uniforms {
             bands: [[0.0; 4]; BAND_COUNT / 4],
             resolution: [self.config.width as f32, self.config.height as f32],
-            _padding: [0.0; 2],
+            time,
+            beat: spectrum.beat,
+            bass: spectrum.bass,
+            mid: spectrum.mid,
+            treble: spectrum.treble,
+            _padding: 0.0,
         };
         bytemuck::cast_slice_mut::<_, f32>(&mut uniforms.bands).copy_from_slice(&spectrum.bands);
         self.queue
@@ -177,7 +213,7 @@ impl Renderer {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("bars"),
+                label: Some(VISUALS[self.visual].0),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &view,
                     depth_slice: None,
@@ -189,7 +225,7 @@ impl Renderer {
                 })],
                 ..Default::default()
             });
-            pass.set_pipeline(&self.pipeline);
+            pass.set_pipeline(&self.pipelines[self.visual]);
             pass.set_bind_group(0, &self.bind_group, &[]);
             pass.draw(0..3, 0..1);
         }

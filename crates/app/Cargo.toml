@@ -6,6 +6,7 @@ edition.workspace = true
 [dependencies]
 analysis.workspace = true
 render.workspace = true
+web-time = "1"
 winit.workspace = true
 log.workspace = true
 

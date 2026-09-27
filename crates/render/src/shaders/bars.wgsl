@@ -1,28 +1,4 @@
-const BAND_COUNT: u32 = 64u;
-
-struct Uniforms {
-    // 64 bands packed in vec4s: uniform arrays need a 16-byte element stride.
-    bands: array<vec4<f32>, 16>,
-    resolution: vec2<f32>,
-};
-
-@group(0) @binding(0) var<uniform> u: Uniforms;
-
-// A single triangle covering the whole screen.
-@vertex
-fn vs_main(@builtin(vertex_index) index: u32) -> @builtin(position) vec4<f32> {
-    let uv = vec2<f32>(f32((index << 1u) & 2u), f32(index & 2u));
-    return vec4<f32>(uv * 2.0 - 1.0, 0.0, 1.0);
-}
-
-fn band(i: u32) -> f32 {
-    return u.bands[i / 4u][i % 4u];
-}
-
-fn hue(h: f32) -> vec3<f32> {
-    let k = vec3<f32>(0.0, 2.0 / 3.0, 1.0 / 3.0);
-    return clamp(abs(fract(h + k) * 6.0 - 3.0) - 1.0, vec3<f32>(0.0), vec3<f32>(1.0));
-}
+// Classic spectrum bars, low frequencies on the left.
 
 @fragment
 fn fs_main(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
