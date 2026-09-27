@@ -1,2 +1,3 @@
-# ongakue
-Music visualizer
+# 音楽絵 (Ongakue)
+
+Music visualizer in Rust
