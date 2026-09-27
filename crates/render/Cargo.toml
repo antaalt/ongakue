@@ -4,6 +4,8 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+analysis.workspace = true
+bytemuck = { version = "1", features = ["derive"] }
 wgpu.workspace = true
 log.workspace = true
 

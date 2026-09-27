@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+analysis.workspace = true
 render.workspace = true
 winit.workspace = true
 log.workspace = true

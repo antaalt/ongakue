@@ -6,6 +6,7 @@ Live version: https://antaalt.github.io/ongakue/ (deployed from `main` by GitHub
 
 ## Layout
 
+- `crates/analysis`: FFT and frequency bands, pure Rust (`cargo test -p analysis`)
 - `crates/render`: wgpu renderer, independent of windowing and audio
 - `crates/app`: entry point, window and event loop (winit)
 

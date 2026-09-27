@@ -2,6 +2,7 @@ mod audio;
 
 use std::sync::Arc;
 
+use analysis::Analyzer;
 use render::Renderer;
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
@@ -19,8 +20,7 @@ struct App {
     renderer: Option<Renderer>,
     audio: audio::Backend,
     samples: Box<[f32; audio::SAMPLE_COUNT]>,
-    /// Smoothed loudness, 0..1. Temporary until the spectrum analysis lands.
-    level: f32,
+    analyzer: Analyzer,
 }
 
 impl ApplicationHandler<UserEvent> for App {
@@ -75,14 +75,10 @@ impl ApplicationHandler<UserEvent> for App {
             }
             WindowEvent::RedrawRequested => {
                 self.audio.latest_samples(&mut self.samples);
-                let rms = (self.samples.iter().map(|s| s * s).sum::<f32>()
-                    / self.samples.len() as f32)
-                    .sqrt();
-                // Fast attack, slow decay.
-                self.level = (rms * 4.0).min(1.0).max(self.level * 0.92);
+                let spectrum = self.analyzer.process(&self.samples[..]);
 
                 if let Some(renderer) = &mut self.renderer {
-                    renderer.render(self.level);
+                    renderer.render(spectrum);
                 }
                 // On the web this schedules the next requestAnimationFrame.
                 if let Some(window) = &self.window {
@@ -104,13 +100,14 @@ fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
     let event_loop = EventLoop::<UserEvent>::with_user_event().build().unwrap();
+    let audio = audio::Backend::new().expect("failed to initialize audio");
     let app = App {
         proxy: event_loop.create_proxy(),
         window: None,
         renderer: None,
-        audio: audio::Backend::new().expect("failed to initialize audio"),
+        analyzer: Analyzer::new(audio.sample_rate(), audio::SAMPLE_COUNT),
+        audio,
         samples: Box::new([0.0; audio::SAMPLE_COUNT]),
-        level: 0.0,
     };
 
     #[cfg(target_arch = "wasm32")]

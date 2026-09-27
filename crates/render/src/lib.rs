@@ -1,12 +1,26 @@
 //! GPU renderer. Knows nothing about windows or audio: it takes a surface
-//! target and a size, and draws a frame.
+//! target and a size, and draws a frame from a [`Spectrum`].
+
+use analysis::{BAND_COUNT, Spectrum};
+use bytemuck::{Pod, Zeroable};
+
+/// Mirrors `Uniforms` in the shader.
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct Uniforms {
+    bands: [[f32; 4]; BAND_COUNT / 4],
+    resolution: [f32; 2],
+    _padding: [f32; 2],
+}
 
 pub struct Renderer {
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
-    frame: u64,
+    pipeline: wgpu::RenderPipeline,
+    uniform_buffer: wgpu::Buffer,
+    bind_group: wgpu::BindGroup,
 }
 
 impl Renderer {
@@ -53,14 +67,75 @@ impl Renderer {
             .get_default_config(&adapter, width.max(1), height.max(1))
             .expect("surface not supported by adapter");
         config.present_mode = wgpu::PresentMode::AutoVsync;
+        // Browsers only offer non-sRGB surfaces; use the same natively so the
+        // shader colors look identical everywhere.
+        config.format = config.format.remove_srgb_suffix();
         surface.configure(&device, &config);
+
+        let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("uniforms"),
+            size: size_of::<Uniforms>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("uniforms"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("uniforms"),
+            layout: &bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: uniform_buffer.as_entire_binding(),
+            }],
+        });
+
+        let shader = device.create_shader_module(wgpu::include_wgsl!("shaders/bars.wgsl"));
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("bars"),
+            bind_group_layouts: &[Some(&bind_group_layout)],
+            ..Default::default()
+        });
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("bars"),
+            layout: Some(&layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                compilation_options: Default::default(),
+                targets: &[Some(config.format.into())],
+            }),
+            primitive: Default::default(),
+            depth_stencil: None,
+            multisample: Default::default(),
+            multiview_mask: None,
+            cache: None,
+        });
 
         Self {
             surface,
             device,
             queue,
             config,
-            frame: 0,
+            pipeline,
+            uniform_buffer,
+            bind_group,
         }
     }
 
@@ -73,8 +148,7 @@ impl Renderer {
         self.surface.configure(&self.device, &self.config);
     }
 
-    /// `level` is the current loudness, 0..1.
-    pub fn render(&mut self, level: f32) {
+    pub fn render(&mut self, spectrum: &Spectrum) {
         let (frame, suboptimal) = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame) => (frame, false),
             wgpu::CurrentSurfaceTexture::Suboptimal(frame) => (frame, true),
@@ -89,34 +163,36 @@ impl Renderer {
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
-        // Placeholder until the spectrum drives the visuals: slowly cycle
-        // the hue, with brightness following the loudness.
-        let t = self.frame as f64 / 60.0;
-        self.frame += 1;
-        let brightness = 0.1 + 0.9 * level as f64;
-        let color = wgpu::Color {
-            r: brightness * (0.5 + 0.5 * (t * 0.7).sin()),
-            g: brightness * (0.5 + 0.5 * (t * 0.7 + 2.1).sin()),
-            b: brightness * (0.5 + 0.5 * (t * 0.7 + 4.2).sin()),
-            a: 1.0,
+        let mut uniforms = Uniforms {
+            bands: [[0.0; 4]; BAND_COUNT / 4],
+            resolution: [self.config.width as f32, self.config.height as f32],
+            _padding: [0.0; 2],
         };
+        bytemuck::cast_slice_mut::<_, f32>(&mut uniforms.bands).copy_from_slice(&spectrum.bands);
+        self.queue
+            .write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-        encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("clear"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &view,
-                depth_slice: None,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(color),
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            ..Default::default()
-        });
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("bars"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                ..Default::default()
+            });
+            pass.set_pipeline(&self.pipeline);
+            pass.set_bind_group(0, &self.bind_group, &[]);
+            pass.draw(0..3, 0..1);
+        }
         self.queue.submit([encoder.finish()]);
         self.queue.present(frame);
 

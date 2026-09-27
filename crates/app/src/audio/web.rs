@@ -20,6 +20,7 @@ pub const SAMPLE_COUNT: usize = 2048;
 
 pub struct Backend {
     analyser: AnalyserNode,
+    sample_rate: f32,
 }
 
 struct State {
@@ -80,7 +81,15 @@ impl Backend {
             .set_onclick(Some(on_click.as_ref().unchecked_ref()));
         on_click.forget();
 
-        Ok(Self { analyser })
+        let sample_rate = state.borrow().ctx.sample_rate();
+        Ok(Self {
+            analyser,
+            sample_rate,
+        })
+    }
+
+    pub fn sample_rate(&self) -> f32 {
+        self.sample_rate
     }
 
     /// Copies the most recently played samples (mono, -1..1) into `out`.

@@ -7,6 +7,7 @@ version = "0.1.0"
 edition = "2024"
 
 [workspace.dependencies]
+analysis = { path = "crates/analysis" }
 render = { path = "crates/render" }
 wgpu = { version = "30", default-features = false, features = ["std", "wgsl"] }
 winit = "0.30"
