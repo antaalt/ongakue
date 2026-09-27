@@ -2,6 +2,8 @@
 
 Music visualizer in Rust, running in the browser (WebAssembly + WebGPU/WebGL2) and natively.
 
+Live version: https://antaalt.github.io/ongakue/ (deployed from `main` by GitHub Actions)
+
 ## Layout
 
 - `crates/render`: wgpu renderer, independent of windowing and audio
