@@ -32,13 +32,23 @@
       #editor-body {
         position: relative; flex: 1; overflow: hidden;
         border: 1px solid #333; border-radius: 4px; background: rgba(0, 0, 0, 0.5);
+        /* Room for 3-digit line numbers. `ch` resolves in each element's own
+           (monospace) font, so the gutter and the code agree. */
+        --gutter: calc(3ch + 16px);
       }
-      #editor-backdrop, #editor-code {
-        position: absolute; inset: 0; margin: 0; padding: 8px; border: 0;
+      #editor-gutter, #editor-backdrop, #editor-code {
+        position: absolute; top: 0; bottom: 0; margin: 0; padding: 8px; border: 0;
         box-sizing: border-box;
         font: 13px/1.45 ui-monospace, Consolas, monospace;
         tab-size: 4; white-space: pre;
       }
+      #editor-gutter {
+        left: 0; width: var(--gutter); padding-right: 8px; overflow: hidden;
+        text-align: right; color: #505868; border-right: 1px solid #2a2e38;
+        pointer-events: none; user-select: none;
+      }
+      #editor-gutter .error { color: #ff8080; }
+      #editor-backdrop, #editor-code { left: var(--gutter); right: 0; }
       #editor-backdrop { overflow: hidden; color: #e6e6e6; pointer-events: none; }
       #editor-code {
         overflow: auto; resize: none; outline: none;
@@ -131,6 +141,7 @@
         <button id="editor-close" title="Close">✕</button>
       </div>
       <div id="editor-body">
+        <pre id="editor-gutter" aria-hidden="true"></pre>
         <pre id="editor-backdrop" aria-hidden="true"><div id="editor-error-line" hidden></div><code id="editor-highlight"></code></pre>
         <textarea id="editor-code" wrap="off" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
         <div id="editor-complete" hidden></div>

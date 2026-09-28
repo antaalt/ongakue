@@ -236,7 +236,10 @@ impl Popups {
     fn place(&self, popup: &HtmlElement, line: usize, column: usize) {
         let (char_width, line_height) = self.metrics();
         popup.set_hidden(false);
-        let x = PADDING + column as f64 * char_width - self.code.scroll_left() as f64;
+        // The popups are placed in the editor's body, where the code starts
+        // after the line numbers.
+        let x = self.code.offset_left() as f64 + PADDING + column as f64 * char_width
+            - self.code.scroll_left() as f64;
         let below = PADDING + (line + 1) as f64 * line_height - self.code.scroll_top() as f64;
         let (width, height) = (popup.offset_width() as f64, popup.offset_height() as f64);
         let (area_width, area_height) = (
@@ -249,7 +252,9 @@ impl Popups {
         } else {
             below
         };
-        let left = x.min(area_width - width).max(0.0);
+        let left = x
+            .min(self.code.offset_left() as f64 + area_width - width)
+            .max(0.0);
         let style = popup.style();
         let _ = style.set_property("left", &format!("{left}px"));
         let _ = style.set_property("top", &format!("{top}px"));

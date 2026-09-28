@@ -91,9 +91,35 @@ fn push(html: &mut String, text: &str, class: Option<&str>) {
     }
 }
 
+/// The line numbers shown next to `source`, one per line, as HTML. The
+/// number of `error_line` (from 1) is marked with the `error` class.
+pub fn line_numbers(source: &str, error_line: Option<usize>) -> String {
+    let count = source.split('\n').count();
+    let mut html = String::with_capacity(count * 4);
+    for line in 1..=count {
+        if Some(line) == error_line {
+            html.push_str(&format!("<span class=\"error\">{line}</span>\n"));
+        } else {
+            html.push_str(&format!("{line}\n"));
+        }
+    }
+    html
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn numbers_every_line() {
+        assert_eq!(line_numbers("a", None), "1\n");
+        // A trailing newline starts a new, empty line.
+        assert_eq!(line_numbers("a\nb\n", None), "1\n2\n3\n");
+        assert_eq!(
+            line_numbers("a\nb", Some(2)),
+            "1\n<span class=\"error\">2</span>\n"
+        );
+    }
 
     #[test]
     fn colors_tokens() {

@@ -17,7 +17,7 @@ use web_sys::{
 };
 use winit::event_loop::EventLoopProxy;
 
-use super::highlight::highlight;
+use super::highlight::{highlight, line_numbers};
 use super::popups::{Popups, insert_text};
 use crate::UserEvent;
 use render::ShaderError;
@@ -35,6 +35,8 @@ pub struct Editor {
     error: HtmlElement,
     /// Red band behind the line of the error.
     error_line: HtmlElement,
+    /// Line of the current error, from 1, shown in red in the gutter.
+    error_at: Rc<Cell<Option<usize>>>,
     storage: Option<Storage>,
     /// Index of the visual whose source is in the editor.
     visual: Rc<Cell<usize>>,
@@ -50,6 +52,8 @@ impl Editor {
         let code: HtmlTextAreaElement = element(&document, "editor-code")?;
         let backdrop: HtmlElement = element(&document, "editor-backdrop")?;
         let highlighted: HtmlElement = element(&document, "editor-highlight")?;
+        let gutter: HtmlElement = element(&document, "editor-gutter")?;
+        let error_at = Rc::new(Cell::new(None));
         let visuals: HtmlSelectElement = element(&document, "editor-title")?;
         let visual = Rc::new(Cell::new(0));
         let pending = Rc::new(Cell::new(None));
@@ -60,9 +64,14 @@ impl Editor {
         );
 
         let refresh: Rc<dyn Fn()> = {
-            let code = code.clone();
-            // Extra lines, so the backdrop can scroll as far as the textarea.
-            Rc::new(move || highlighted.set_inner_html(&(highlight(&code.value()) + "\n\n\n")))
+            let (code, gutter, error_at) = (code.clone(), gutter.clone(), error_at.clone());
+            Rc::new(move || {
+                let source = code.value();
+                // Extra lines, so the backdrop and gutter can scroll as far as
+                // the textarea.
+                highlighted.set_inner_html(&(highlight(&source) + "\n\n\n"));
+                gutter.set_inner_html(&(line_numbers(&source, error_at.get()) + "\n\n\n"));
+            })
         };
 
         let on_scroll = {
@@ -70,6 +79,7 @@ impl Editor {
             Closure::<dyn FnMut()>::new(move || {
                 backdrop.set_scroll_top(code.scroll_top());
                 backdrop.set_scroll_left(code.scroll_left());
+                gutter.set_scroll_top(code.scroll_top());
                 popups.hide();
                 popups.hide_tooltip();
             })
@@ -195,6 +205,7 @@ impl Editor {
             visuals,
             error: element(&document, "editor-error")?,
             error_line: element(&document, "editor-error-line")?,
+            error_at,
             refresh,
             popups,
             storage: window.local_storage().ok().flatten(),
@@ -241,6 +252,8 @@ impl Editor {
             let _ = self.error_line.style().set_property("top", &top);
         }
         self.error_line.set_hidden(line.is_none());
+        self.error_at.set(line);
+        (self.refresh)();
     }
 
     /// The source saved for a visual, if it was edited.
