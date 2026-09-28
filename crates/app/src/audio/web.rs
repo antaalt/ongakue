@@ -54,13 +54,18 @@ impl Backend {
         }));
 
         let file_input: HtmlInputElement = element(&document, "file")?;
+        fn load_file_from_input(input: &HtmlInputElement, state: Rc<RefCell<State>>) {
+            if let Some(file) = input.files().and_then(|files| files.get(0)) {
+                log::info!("Loading file {}", file.name());
+                wasm_bindgen_futures::spawn_local(load_file(state.clone(), file));
+            }
+        }
+        load_file_from_input(&file_input, state.clone());
         let on_change = {
             let state = state.clone();
             let input = file_input.clone();
             Closure::<dyn FnMut()>::new(move || {
-                if let Some(file) = input.files().and_then(|files| files.get(0)) {
-                    wasm_bindgen_futures::spawn_local(load_file(state.clone(), file));
-                }
+                load_file_from_input(&input, state.clone());
             })
         };
         file_input.set_onchange(Some(on_change.as_ref().unchecked_ref()));
