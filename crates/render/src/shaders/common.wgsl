@@ -14,6 +14,8 @@ struct Uniforms {
     bass: f32,
     mid: f32,
     treble: f32,
+    // Free parameters, e.g. set from sliders.
+    params: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> u: Uniforms;

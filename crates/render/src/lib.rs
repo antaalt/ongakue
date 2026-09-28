@@ -30,6 +30,7 @@ struct Uniforms {
     mid: f32,
     treble: f32,
     _padding: f32,
+    params: [f32; 4],
 }
 
 struct Visual {
@@ -51,20 +52,40 @@ pub struct Renderer {
     visual: usize,
     uniform_buffer: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
+    params: [f32; 4],
 }
 
-/// Checks that a visual's source compiles, returning a readable error with
-/// line numbers otherwise.
-pub fn validate_shader(source: &str) -> Result<(), String> {
+/// Why a shader doesn't compile.
+#[derive(Clone, Debug)]
+pub struct ShaderError {
+    /// Readable message, quoting the offending code.
+    pub message: String,
+    /// Line of the error in the visual's source, starting at 1, if known.
+    pub line: Option<usize>,
+}
+
+impl std::fmt::Display for ShaderError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+/// Checks that a visual's source compiles.
+pub fn validate_shader(source: &str) -> Result<(), ShaderError> {
     let full = full_source(source);
-    let module = naga::front::wgsl::parse_str(&full)
-        .map_err(|e| e.emit_to_string_with_path(&full, "shader"))?;
+    let module = naga::front::wgsl::parse_str(&full).map_err(|e| ShaderError {
+        message: e.emit_to_string_with_path(&full, "shader"),
+        line: e.location(&full).map(|l| l.line_number as usize),
+    })?;
     naga::valid::Validator::new(
         naga::valid::ValidationFlags::all(),
         naga::valid::Capabilities::empty(),
     )
     .validate(&module)
-    .map_err(|e| e.emit_to_string_with_path(&full, "shader"))?;
+    .map_err(|e| ShaderError {
+        message: e.emit_to_string_with_path(&full, "shader"),
+        line: e.location(&full).map(|l| l.line_number as usize),
+    })?;
     Ok(())
 }
 
@@ -168,6 +189,7 @@ impl Renderer {
             visual: 0,
             uniform_buffer,
             bind_group,
+            params: [0.0; 4],
         };
         renderer.visuals = VISUALS
             .iter()
@@ -249,9 +271,14 @@ impl Renderer {
         self.visuals[index].builtin
     }
 
+    /// Values shaders read as `u.params`, e.g. from sliders.
+    pub fn set_params(&mut self, params: [f32; 4]) {
+        self.params = params;
+    }
+
     /// Replaces a visual's source. If it doesn't compile, the error is
     /// returned and the visual keeps running its last working version.
-    pub fn set_visual_source(&mut self, index: usize, source: String) -> Result<(), String> {
+    pub fn set_visual_source(&mut self, index: usize, source: String) -> Result<(), ShaderError> {
         let result = validate_shader(&source);
         if result.is_ok() {
             self.visuals[index].pipeline = self.create_pipeline(self.visuals[index].name, &source);
@@ -285,6 +312,7 @@ impl Renderer {
             mid: spectrum.mid,
             treble: spectrum.treble,
             _padding: 0.0,
+            params: self.params,
         };
         bytemuck::cast_slice_mut::<_, f32>(&mut uniforms.bands).copy_from_slice(&spectrum.bands);
         self.queue
@@ -338,7 +366,8 @@ mod tests {
         let source =
             "@fragment\nfn fs_main() -> @location(0) vec4<f32> {\n    return vec4<f32>(oops);\n}\n";
         let error = validate_shader(source).unwrap_err();
-        assert!(error.contains("oops"), "{error}");
-        assert!(error.contains("shader:3:"), "{error}");
+        assert!(error.message.contains("oops"), "{error}");
+        assert!(error.message.contains("shader:3:"), "{error}");
+        assert_eq!(error.line, Some(3));
     }
 }

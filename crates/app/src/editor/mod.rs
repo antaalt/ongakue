@@ -1,5 +1,9 @@
 //! Shader editor. Each platform exposes the same `Editor` interface.
 
+// Only the web editor highlights; compiled everywhere so its tests run natively.
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+mod highlight;
+
 #[cfg(not(target_arch = "wasm32"))]
 mod native;
 #[cfg(target_arch = "wasm32")]

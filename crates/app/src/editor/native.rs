@@ -3,6 +3,7 @@
 use winit::event_loop::EventLoopProxy;
 
 use crate::UserEvent;
+use render::ShaderError;
 
 pub struct Editor;
 
@@ -13,7 +14,7 @@ impl Editor {
 
     pub fn show(&self, _visual: usize, _name: &str, _source: &str) {}
 
-    pub fn set_error(&self, _error: Option<&str>) {}
+    pub fn set_error(&self, _error: Option<&ShaderError>) {}
 
     pub fn saved_source(&self, _name: &str) -> Option<String> {
         None

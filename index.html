@@ -26,13 +26,37 @@
       #editor.open { display: flex; }
       #editor-header { display: flex; gap: 8px; align-items: center; }
       #editor-title { flex: 1; font-weight: 600; }
-      #editor-code {
-        flex: 1; resize: none; padding: 8px;
-        border: 1px solid #333; border-radius: 4px;
-        background: rgba(0, 0, 0, 0.5); color: #e6e6e6;
-        font: 13px/1.45 ui-monospace, Consolas, monospace;
-        tab-size: 4; white-space: pre; overflow: auto;
+      /* The textarea (transparent text) sits exactly over the highlighted copy:
+         both must share the same font, padding and line height. The error line
+         marker's position (editor/web.rs) depends on them too. */
+      #editor-body {
+        position: relative; flex: 1; overflow: hidden;
+        border: 1px solid #333; border-radius: 4px; background: rgba(0, 0, 0, 0.5);
       }
+      #editor-backdrop, #editor-code {
+        position: absolute; inset: 0; margin: 0; padding: 8px; border: 0;
+        box-sizing: border-box;
+        font: 13px/1.45 ui-monospace, Consolas, monospace;
+        tab-size: 4; white-space: pre;
+      }
+      #editor-backdrop { overflow: hidden; color: #e6e6e6; pointer-events: none; }
+      #editor-code {
+        overflow: auto; resize: none; outline: none;
+        background: transparent; color: transparent; caret-color: #fff;
+      }
+      #editor-code::selection { background: rgba(120, 160, 255, 0.35); }
+      #editor-error-line {
+        position: absolute; left: 0; right: 0; height: 1.45em;
+        background: rgba(255, 60, 60, 0.25);
+      }
+      #editor-highlight { position: relative; }
+      #editor-highlight .k { color: #ff79c6; }
+      #editor-highlight .t { color: #8be9fd; }
+      #editor-highlight .f { color: #50fa7b; }
+      #editor-highlight .i { color: #ffb86c; }
+      #editor-highlight .n { color: #bd93f9; }
+      #editor-highlight .a { color: #f1fa8c; }
+      #editor-highlight .c { color: #6f7f8f; font-style: italic; }
       #editor-error, #editor-help pre {
         margin: 0; overflow: auto;
         font: 12px/1.4 ui-monospace, Consolas, monospace;
@@ -40,6 +64,25 @@
       #editor-error { max-height: 30%; color: #ff8080; white-space: pre; }
       #editor-help summary { cursor: pointer; color: #aaa; }
       #editor-help pre { color: #ccc; padding-top: 6px; }
+      #tuning {
+        position: absolute; top: 64px; left: 12px; z-index: 1;
+        width: 320px; max-height: calc(100% - 76px); overflow: auto;
+        display: none; flex-direction: column; gap: 6px;
+        padding: 8px 12px; border-radius: 8px; box-sizing: border-box;
+        background: rgba(10, 10, 15, 0.85); color: #eee;
+        font: 13px system-ui, sans-serif;
+      }
+      #tuning.open { display: flex; }
+      #tuning h3 { margin: 8px 0 2px; font-size: 13px; color: #aaa; font-weight: 600; }
+      #tuning .slider {
+        display: grid; grid-template-columns: 110px minmax(0, 1fr) 72px;
+        gap: 6px; align-items: center;
+      }
+      #tuning .slider input { width: 100%; min-width: 0; margin: 0; }
+      #tuning output { text-align: right; font-variant-numeric: tabular-nums; }
+      #tuning-plot { width: 100%; height: 90px; background: rgba(0, 0, 0, 0.5); border-radius: 4px; }
+      #tuning-legend { color: #aaa; font-size: 12px; }
+      #tuning-legend span { margin-right: 10px; }
     </style>
   </head>
   <body>
@@ -48,6 +91,18 @@
       <button id="play" disabled>Play</button>
       <span id="status">Choose an audio file</span>
       <button id="edit">Edit shader</button>
+      <button id="tune">Tuning</button>
+    </div>
+    <div id="tuning">
+      <div id="tuning-sliders"></div>
+      <h3>Beat detection, last 5 seconds</h3>
+      <canvas id="tuning-plot" width="552" height="180"></canvas>
+      <div id="tuning-legend">
+        <span style="color: #8be9fd">— bass rise</span>
+        <span style="color: #ff6b6b">— threshold</span>
+        <span style="color: #ffaa3c">| beat</span>
+      </div>
+      <button id="tuning-reset">Reset to defaults</button>
     </div>
     <div id="editor">
       <div id="editor-header">
@@ -55,7 +110,10 @@
         <button id="editor-reset" title="Restore the built-in version">Reset</button>
         <button id="editor-close" title="Close">✕</button>
       </div>
-      <textarea id="editor-code" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
+      <div id="editor-body">
+        <pre id="editor-backdrop" aria-hidden="true"><div id="editor-error-line" hidden></div><code id="editor-highlight"></code></pre>
+        <textarea id="editor-code" wrap="off" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
+      </div>
       <pre id="editor-error" hidden></pre>
       <details id="editor-help">
         <summary>Available inputs</summary>
@@ -67,6 +125,7 @@ u.bass          average loudness below 250 Hz, 0..1
 u.mid           average loudness from 250 Hz to 4 kHz, 0..1
 u.treble        average loudness above 4 kHz, 0..1
 u.beat          1.0 on a beat, then fading out
+u.params        4 free values, 0..1, set in the Tuning panel (.x .y .z .w)
 band(i)         loudness of band i, 0..1 (i from 0 to 63, low to high)
 band_at(t)      band loudness at t in 0..1, interpolated
 hue(h)          RGB color from a hue in 0..1

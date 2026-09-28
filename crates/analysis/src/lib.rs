@@ -14,33 +14,51 @@ pub const BAND_COUNT: usize = 64;
 const MIN_FREQUENCY: f32 = 30.0;
 const MAX_FREQUENCY: f32 = 16_000.0;
 
-/// Loudness range mapped to 0..1. Anything quieter is 0, anything louder is 1.
-const MIN_DB: f32 = -72.0;
-const MAX_DB: f32 = -12.0;
-
-/// Music has much less energy in the highs than in the lows. Boosting by a few
-/// dB per octave (relative to 1 kHz) keeps the whole spectrum visible.
-const TILT_DB_PER_OCTAVE: f32 = 3.0;
-
-/// Seconds for a band to fall to half its value when the sound stops.
-/// Rises are instant.
-const BAND_HALF_LIFE: f32 = 0.11;
-
 /// Upper edges of the bass and mid ranges, in Hz.
 const BASS_MAX_FREQUENCY: f32 = 250.0;
 const MID_MAX_FREQUENCY: f32 = 4000.0;
 
-/// Beats are detected as sudden rises in the bass bands (kicks), compared to
-/// the recent average rise (spectral flux with an adaptive threshold).
-const BEAT_SENSITIVITY: f32 = 1.5;
-/// Ignore rises below this, so near-silence doesn't produce beats.
-const BEAT_MIN_FLUX: f32 = 0.05;
-/// Shortest time between two beats, in seconds.
-const BEAT_MIN_INTERVAL: f32 = 0.25;
-/// Time over which the average rise is computed, in seconds.
+/// Time over which the beat detector's average rise is computed, in seconds.
 const BEAT_HISTORY: f32 = 1.0;
 /// Seconds for [`Spectrum::beat`] to fall to half after a beat.
 const BEAT_HALF_LIFE: f32 = 0.15;
+
+/// Tunable parameters, read on every call to [`Analyzer::process`]. The
+/// defaults suit most music.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Settings {
+    /// Loudness range mapped to 0..1, in dB: quieter is 0, louder is 1.
+    pub min_db: f32,
+    pub max_db: f32,
+    /// Music has much less energy in the highs than in the lows. Boosting by
+    /// a few dB per octave (relative to 1 kHz) keeps the whole spectrum visible.
+    pub tilt_db_per_octave: f32,
+    /// Seconds for a band to fall to half its value when the sound stops.
+    /// Rises are instant.
+    pub band_half_life: f32,
+    /// Beats are sudden rises in the bass bands (kicks): a rise counts as a
+    /// beat when it exceeds the recent average by this many standard
+    /// deviations (spectral flux with an adaptive threshold).
+    pub beat_sensitivity: f32,
+    /// Rises below this never count, so near-silence doesn't produce beats.
+    pub beat_min_flux: f32,
+    /// Shortest time between two beats, in seconds.
+    pub beat_min_interval: f32,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            min_db: -72.0,
+            max_db: -12.0,
+            tilt_db_per_octave: 3.0,
+            band_half_life: 0.11,
+            beat_sensitivity: 1.5,
+            beat_min_flux: 0.05,
+            beat_min_interval: 0.25,
+        }
+    }
+}
 
 /// The analysis of one frame. All values are normalized to 0..1.
 #[derive(Clone, Debug)]
@@ -84,6 +102,7 @@ struct Band {
 }
 
 pub struct Analyzer {
+    pub settings: Settings,
     fft: Arc<dyn RealToComplex<f32>>,
     window: Vec<f32>,
     input: Vec<f32>,
@@ -102,6 +121,9 @@ pub struct Analyzer {
     flux_mean: f32,
     flux_variance: f32,
     since_beat: f32,
+    /// Latest bass rise and the threshold it was compared to.
+    flux: f32,
+    threshold: f32,
     spectrum: Spectrum,
 }
 
@@ -166,6 +188,9 @@ impl Analyzer {
             flux_mean: 0.0,
             flux_variance: 0.0,
             since_beat: f32::INFINITY,
+            flux: 0.0,
+            threshold: 0.0,
+            settings: Settings::default(),
             spectrum: Spectrum::default(),
         }
     }
@@ -188,7 +213,8 @@ impl Analyzer {
             *magnitude = bin.norm() * scale;
         }
 
-        let decay = 0.5f32.powf(dt / BAND_HALF_LIFE);
+        let settings = self.settings;
+        let decay = 0.5f32.powf(dt / settings.band_half_life);
         let mut current = [0.0; BAND_COUNT];
         for ((value, raw), band) in self
             .spectrum
@@ -208,8 +234,8 @@ impl Analyzer {
                 }
             };
             let db = 20.0 * magnitude.max(1e-10).log10()
-                + TILT_DB_PER_OCTAVE * (band.center / 1000.0).log2();
-            *raw = ((db - MIN_DB) / (MAX_DB - MIN_DB)).clamp(0.0, 1.0);
+                + settings.tilt_db_per_octave * (band.center / 1000.0).log2();
+            *raw = ((db - settings.min_db) / (settings.max_db - settings.min_db)).clamp(0.0, 1.0);
             *value = raw.max(*value * decay);
         }
 
@@ -238,9 +264,13 @@ impl Analyzer {
             .sum::<f32>()
             / bass.len() as f32;
 
-        let threshold = self.flux_mean + BEAT_SENSITIVITY * self.flux_variance.sqrt();
+        let threshold = (self.flux_mean
+            + self.settings.beat_sensitivity * self.flux_variance.sqrt())
+        .max(self.settings.beat_min_flux);
+        self.flux = flux;
+        self.threshold = threshold;
         self.since_beat += dt;
-        if flux > threshold.max(BEAT_MIN_FLUX) && self.since_beat >= BEAT_MIN_INTERVAL {
+        if flux > threshold && self.since_beat >= self.settings.beat_min_interval {
             self.since_beat = 0.0;
             self.spectrum.beat = 1.0;
         } else {
@@ -253,6 +283,16 @@ impl Analyzer {
         let delta = flux - self.flux_mean;
         self.flux_mean += alpha * delta;
         self.flux_variance = (1.0 - alpha) * (self.flux_variance + alpha * delta * delta);
+    }
+
+    /// How much the bass rose in the latest frame. A beat is detected when it
+    /// exceeds [`Analyzer::beat_threshold`]. Useful to tune the detection.
+    pub fn beat_flux(&self) -> f32 {
+        self.flux
+    }
+
+    pub fn beat_threshold(&self) -> f32 {
+        self.threshold
     }
 
     /// Center frequency of a band, in Hz.
@@ -382,23 +422,23 @@ mod tests {
 
     /// Feeds `signal` frame by frame, as the app does at 60 fps, and counts
     /// the frames where a beat starts.
-    fn count_beats(signal: &[f32]) -> usize {
+    fn count_beats(signal: &[f32], settings: Settings) -> usize {
         let hop = (SAMPLE_RATE * FRAME) as usize;
         let mut analyzer = Analyzer::new(SAMPLE_RATE, FFT_SIZE);
+        analyzer.settings = settings;
         (FFT_SIZE..signal.len())
             .step_by(hop)
             .filter(|&end| analyzer.process(&signal[end - FFT_SIZE..end], FRAME).beat == 1.0)
             .count()
     }
 
-    #[test]
-    fn detects_kicks() {
+    /// A quiet steady tone, plus a decaying 60 Hz kick every 0.5 s from
+    /// 0.25 s on: 8 kicks in total.
+    fn kicks() -> Vec<f32> {
         let len = (SAMPLE_RATE * 4.0) as usize;
-        let signal: Vec<f32> = (0..len)
+        (0..len)
             .map(|i| {
                 let t = i as f32 / SAMPLE_RATE;
-                // A quiet steady tone, plus a decaying 60 Hz kick every 0.5 s
-                // from 0.25 s on: 8 kicks in total.
                 let tone = 0.02 * (std::f32::consts::TAU * 1000.0 * t).sin();
                 let since_kick = (t - 0.25).rem_euclid(0.5);
                 let kick = if t >= 0.25 {
@@ -409,8 +449,21 @@ mod tests {
                 };
                 tone + kick
             })
-            .collect();
-        assert_eq!(count_beats(&signal), 8);
+            .collect()
+    }
+
+    #[test]
+    fn detects_kicks() {
+        assert_eq!(count_beats(&kicks(), Settings::default()), 8);
+    }
+
+    #[test]
+    fn settings_take_effect() {
+        let deaf = Settings {
+            beat_min_flux: 1.0,
+            ..Settings::default()
+        };
+        assert_eq!(count_beats(&kicks(), deaf), 0);
     }
 
     #[test]
@@ -423,7 +476,7 @@ mod tests {
             })
             .collect();
         // At most one, when the sound starts.
-        assert!(count_beats(&signal) <= 1);
+        assert!(count_beats(&signal, Settings::default()) <= 1);
     }
 
     #[test]

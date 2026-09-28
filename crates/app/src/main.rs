@@ -1,5 +1,6 @@
 mod audio;
 mod editor;
+mod tuning;
 
 use std::sync::Arc;
 
@@ -30,6 +31,7 @@ struct App {
     renderer: Option<Renderer>,
     audio: audio::Backend,
     editor: editor::Editor,
+    tuning: tuning::Tuning,
     samples: Box<[f32; audio::SAMPLE_COUNT]>,
     analyzer: Analyzer,
     start: Instant,
@@ -54,7 +56,7 @@ impl App {
         self.editor
             .show(visual, renderer.visual_name(visual), source);
         self.editor
-            .set_error(render::validate_shader(source).err().as_deref());
+            .set_error(render::validate_shader(source).err().as_ref());
     }
 }
 
@@ -115,7 +117,7 @@ impl ApplicationHandler<UserEvent> for App {
                     self.editor.save_source(name, &source);
                 }
                 let result = renderer.set_visual_source(visual, source);
-                self.editor.set_error(result.err().as_deref());
+                self.editor.set_error(result.err().as_ref());
             }
             UserEvent::ShaderReset { visual } => {
                 let Some(renderer) = &mut self.renderer else {
@@ -156,11 +158,21 @@ impl ApplicationHandler<UserEvent> for App {
                 self.last_frame = now;
 
                 self.audio.latest_samples(&mut self.samples);
+                self.analyzer.settings = self.tuning.settings();
                 let spectrum = self.analyzer.process(&self.samples[..], dt);
+                let beat = spectrum.beat == 1.0;
+                let time = (now - self.start).as_secs_f32();
 
                 if let Some(renderer) = &mut self.renderer {
-                    renderer.render(spectrum, (now - self.start).as_secs_f32());
+                    renderer.set_params(self.tuning.params());
+                    renderer.render(spectrum, time);
                 }
+                self.tuning.record(
+                    time,
+                    self.analyzer.beat_flux(),
+                    self.analyzer.beat_threshold(),
+                    beat,
+                );
                 // On the web this schedules the next requestAnimationFrame.
                 if let Some(window) = &self.window {
                     window.request_redraw();
@@ -184,9 +196,11 @@ fn main() {
     let audio = audio::Backend::new().expect("failed to initialize audio");
     let editor =
         editor::Editor::new(event_loop.create_proxy()).expect("failed to initialize editor");
+    let tuning = tuning::Tuning::new().expect("failed to initialize the tuning panel");
     let app = App {
         proxy: event_loop.create_proxy(),
         editor,
+        tuning,
         window: None,
         renderer: None,
         analyzer: Analyzer::new(audio.sample_rate(), audio::SAMPLE_COUNT),
