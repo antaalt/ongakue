@@ -12,7 +12,9 @@ impl Editor {
         Ok(Self)
     }
 
-    pub fn show(&self, _visual: usize, _name: &str, _source: &str) {}
+    pub fn set_visuals(&self, _names: &[&str]) {}
+
+    pub fn show(&self, _visual: usize, _source: &str) {}
 
     pub fn set_error(&self, _error: Option<&ShaderError>) {}
 

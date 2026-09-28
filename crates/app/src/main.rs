@@ -8,17 +8,18 @@ use analysis::Analyzer;
 use render::Renderer;
 use web_time::Instant;
 use winit::application::ApplicationHandler;
-use winit::event::{ElementState, MouseButton, WindowEvent};
+use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy};
-use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowId};
 
 /// Events sent to the event loop from outside of it.
-// The editor, which sends the shader events, only exists on the web.
+// The editor, which sends the visual and shader events, only exists on the web.
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 enum UserEvent {
     /// The (async) GPU setup is done.
     RendererReady(Box<Renderer>),
+    /// A visual was picked in the editor.
+    VisualSelected(usize),
     /// The shader of a visual was edited.
     ShaderEdited { visual: usize, source: String },
     /// Restore a visual's built-in shader.
@@ -39,13 +40,6 @@ struct App {
 }
 
 impl App {
-    fn next_visual(&mut self) {
-        if let Some(renderer) = &mut self.renderer {
-            renderer.next_visual();
-        }
-        self.show_current_visual();
-    }
-
     /// Loads the displayed visual's source into the editor.
     fn show_current_visual(&self) {
         let Some(renderer) = &self.renderer else {
@@ -53,8 +47,7 @@ impl App {
         };
         let visual = renderer.current_visual();
         let source = renderer.visual_source(visual);
-        self.editor
-            .show(visual, renderer.visual_name(visual), source);
+        self.editor.show(visual, source);
         self.editor
             .set_error(render::validate_shader(source).err().as_ref());
     }
@@ -103,7 +96,17 @@ impl ApplicationHandler<UserEvent> for App {
                         let _ = renderer.set_visual_source(visual, source);
                     }
                 }
+                let names: Vec<_> = (0..renderer.visual_count())
+                    .map(|visual| renderer.visual_name(visual))
+                    .collect();
+                self.editor.set_visuals(&names);
                 self.renderer = Some(*renderer);
+                self.show_current_visual();
+            }
+            UserEvent::VisualSelected(visual) => {
+                if let Some(renderer) = &mut self.renderer {
+                    renderer.set_visual(visual);
+                }
                 self.show_current_visual();
             }
             UserEvent::ShaderEdited { visual, source } => {
@@ -138,18 +141,6 @@ impl ApplicationHandler<UserEvent> for App {
                 if let Some(renderer) = &mut self.renderer {
                     renderer.resize(size.width, size.height);
                 }
-            }
-            WindowEvent::MouseInput {
-                state: ElementState::Pressed,
-                button: MouseButton::Left,
-                ..
-            } => self.next_visual(),
-            WindowEvent::KeyboardInput { event, .. }
-                if event.state == ElementState::Pressed
-                    && !event.repeat
-                    && event.logical_key == Key::Named(NamedKey::Space) =>
-            {
-                self.next_visual()
             }
             WindowEvent::RedrawRequested => {
                 let now = Instant::now();

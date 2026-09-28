@@ -13,9 +13,9 @@ Live version: https://antaalt.github.io/ongakue/ (deployed from `main` by GitHub
 ## Controls
 
 - Pick an audio file, then press **Play**
-- Click the visual or press **Space** to switch visuals
-- **Edit shader** opens the current visual's WGSL code: it recompiles as you type,
-  shows errors, and is saved in the browser (**Reset** restores the original)
+- **Edit shader** opens the current visual's WGSL code, with a picker at the top to
+  switch visuals: it recompiles as you type, shows errors, and is saved in the
+  browser (**Reset** restores the original)
 - **Tuning** opens sliders for the analysis settings and the shaders' free
   parameters (`u.params`), with a live plot of the beat detection
 

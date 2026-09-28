@@ -11,8 +11,8 @@ use bytemuck::{Pod, Zeroable};
 /// declarations before they appear).
 const COMMON_SHADER: &str = include_str!("shaders/common.wgsl");
 
-/// Built-in visuals: each is a fragment shader defining `fs_main`, cycled
-/// through with [`Renderer::next_visual`].
+/// Built-in visuals: each is a fragment shader defining `fs_main`, selected
+/// with [`Renderer::set_visual`].
 const VISUALS: &[(&str, &str)] = &[
     ("radial", include_str!("shaders/radial.wgsl")),
     ("bars", include_str!("shaders/bars.wgsl")),
@@ -243,9 +243,10 @@ impl Renderer {
         self.surface.configure(&self.device, &self.config);
     }
 
-    /// Switches to the next visual, wrapping around.
-    pub fn next_visual(&mut self) {
-        self.visual = (self.visual + 1) % self.visuals.len();
+    /// Switches to the visual at `index`.
+    pub fn set_visual(&mut self, index: usize) {
+        assert!(index < self.visuals.len());
+        self.visual = index;
         log::info!("visual: {}", self.visuals[self.visual].name);
     }
 

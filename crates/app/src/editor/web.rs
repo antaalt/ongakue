@@ -12,7 +12,8 @@ use std::rc::Rc;
 
 use wasm_bindgen::prelude::*;
 use web_sys::{
-    Document, HtmlButtonElement, HtmlElement, HtmlTextAreaElement, KeyboardEvent, Storage,
+    Document, HtmlButtonElement, HtmlElement, HtmlOptionElement, HtmlSelectElement,
+    HtmlTextAreaElement, KeyboardEvent, Storage,
 };
 use winit::event_loop::EventLoopProxy;
 
@@ -24,7 +25,8 @@ use render::ShaderError;
 const COMPILE_DELAY_MS: i32 = 150;
 
 pub struct Editor {
-    title: HtmlElement,
+    /// Picks the visual to display and edit.
+    visuals: HtmlSelectElement,
     code: HtmlTextAreaElement,
     /// Re-highlights the code after it changed.
     refresh: Rc<dyn Fn()>,
@@ -46,6 +48,7 @@ impl Editor {
         let code: HtmlTextAreaElement = element(&document, "editor-code")?;
         let backdrop: HtmlElement = element(&document, "editor-backdrop")?;
         let highlighted: HtmlElement = element(&document, "editor-highlight")?;
+        let visuals: HtmlSelectElement = element(&document, "editor-title")?;
         let visual = Rc::new(Cell::new(0));
         let pending = Rc::new(Cell::new(None));
 
@@ -117,6 +120,17 @@ impl Editor {
         code.set_onkeydown(Some(on_keydown.as_ref().unchecked_ref()));
         on_keydown.forget();
 
+        let on_change = {
+            let (proxy, visuals) = (proxy.clone(), visuals.clone());
+            Closure::<dyn FnMut()>::new(move || {
+                if let Ok(visual) = usize::try_from(visuals.selected_index()) {
+                    let _ = proxy.send_event(UserEvent::VisualSelected(visual));
+                }
+            })
+        };
+        visuals.set_onchange(Some(on_change.as_ref().unchecked_ref()));
+        on_change.forget();
+
         on_click(&document, "edit", {
             let panel = panel.clone();
             move || {
@@ -136,7 +150,7 @@ impl Editor {
         })?;
 
         Ok(Self {
-            title: element(&document, "editor-title")?,
+            visuals,
             error: element(&document, "editor-error")?,
             error_line: element(&document, "editor-error-line")?,
             refresh,
@@ -147,14 +161,24 @@ impl Editor {
         })
     }
 
+    /// Fills the visual picker, in the renderer's order.
+    pub fn set_visuals(&self, names: &[&str]) {
+        self.visuals.set_length(0);
+        for name in names {
+            if let Ok(option) = HtmlOptionElement::new_with_text(name) {
+                let _ = self.visuals.add_with_html_option_element(&option);
+            }
+        }
+    }
+
     /// Loads a visual's source into the editor.
-    pub fn show(&self, visual: usize, name: &str, source: &str) {
+    pub fn show(&self, visual: usize, source: &str) {
         // Drop a recompile still pending for the previous content.
         if let Some(timer) = self.pending.take() {
             web_sys::window().unwrap().clear_timeout_with_handle(timer);
         }
         self.visual.set(visual);
-        self.title.set_text_content(Some(name));
+        self.visuals.set_selected_index(visual as i32);
         self.code.set_value(source);
         (self.refresh)();
     }
