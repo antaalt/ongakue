@@ -4,97 +4,7 @@
 //! It's a keyword-based tokenizer, not a parser: good enough to color code
 //! as you type, and fast enough to run on every keystroke.
 
-const KEYWORDS: &[&str] = &[
-    "alias",
-    "break",
-    "case",
-    "const",
-    "const_assert",
-    "continue",
-    "continuing",
-    "default",
-    "diagnostic",
-    "discard",
-    "else",
-    "enable",
-    "false",
-    "fn",
-    "for",
-    "if",
-    "let",
-    "loop",
-    "override",
-    "requires",
-    "return",
-    "struct",
-    "switch",
-    "true",
-    "var",
-    "while",
-];
-
-const TYPES: &[&str] = &[
-    "array", "atomic", "bool", "f16", "f32", "i32", "ptr", "sampler", "u32", "vec2", "vec3",
-    "vec4", "vec2f", "vec3f", "vec4f", "vec2i", "vec3i", "vec4i", "vec2u", "vec3u", "vec4u",
-    "mat2x2", "mat2x3", "mat2x4", "mat3x2", "mat3x3", "mat3x4", "mat4x2", "mat4x3", "mat4x4",
-    "mat2x2f", "mat3x3f", "mat4x4f",
-];
-
-const BUILTINS: &[&str] = &[
-    "abs",
-    "acos",
-    "all",
-    "any",
-    "asin",
-    "atan",
-    "atan2",
-    "ceil",
-    "clamp",
-    "cos",
-    "cosh",
-    "cross",
-    "degrees",
-    "determinant",
-    "distance",
-    "dot",
-    "dpdx",
-    "dpdy",
-    "exp",
-    "exp2",
-    "floor",
-    "fma",
-    "fract",
-    "fwidth",
-    "inverseSqrt",
-    "length",
-    "log",
-    "log2",
-    "max",
-    "min",
-    "mix",
-    "modf",
-    "normalize",
-    "pow",
-    "radians",
-    "reflect",
-    "refract",
-    "round",
-    "saturate",
-    "select",
-    "sign",
-    "sin",
-    "sinh",
-    "smoothstep",
-    "sqrt",
-    "step",
-    "tan",
-    "tanh",
-    "transpose",
-    "trunc",
-];
-
-/// What the visuals get from the app (see `common.wgsl`).
-const INPUTS: &[&str] = &["band", "band_at", "hue", "BAND_COUNT", "PI"];
+use super::wgsl::{BUILTINS, INPUTS, KEYWORDS, TYPES};
 
 pub fn highlight(source: &str) -> String {
     let mut html = String::with_capacity(source.len() * 2);
@@ -134,9 +44,9 @@ fn classify(word: &str) -> Option<&'static str> {
         Some("k")
     } else if TYPES.contains(&word) {
         Some("t")
-    } else if BUILTINS.contains(&word) {
+    } else if BUILTINS.iter().any(|doc| doc.name == word) {
         Some("f")
-    } else if INPUTS.contains(&word) {
+    } else if INPUTS.iter().any(|doc| doc.name == word) {
         Some("i")
     } else {
         None

@@ -5,19 +5,20 @@
 //!
 //! Highlighting: the textarea's text is transparent, and a `<pre>` with the
 //! highlighted code sits exactly behind it. Typing, selection, undo and
-//! copy/paste all stay native.
+//! copy/paste all stay native. Completion and hover docs are in `popups.rs`.
 
 use std::cell::Cell;
 use std::rc::Rc;
 
 use wasm_bindgen::prelude::*;
 use web_sys::{
-    Document, HtmlButtonElement, HtmlElement, HtmlOptionElement, HtmlSelectElement,
-    HtmlTextAreaElement, KeyboardEvent, Storage,
+    Document, Event, HtmlButtonElement, HtmlElement, HtmlOptionElement, HtmlSelectElement,
+    HtmlTextAreaElement, InputEvent, KeyboardEvent, MouseEvent, Storage,
 };
 use winit::event_loop::EventLoopProxy;
 
 use super::highlight::highlight;
+use super::popups::{Popups, insert_text};
 use crate::UserEvent;
 use render::ShaderError;
 
@@ -30,6 +31,7 @@ pub struct Editor {
     code: HtmlTextAreaElement,
     /// Re-highlights the code after it changed.
     refresh: Rc<dyn Fn()>,
+    popups: Rc<Popups>,
     error: HtmlElement,
     /// Red band behind the line of the error.
     error_line: HtmlElement,
@@ -51,6 +53,11 @@ impl Editor {
         let visuals: HtmlSelectElement = element(&document, "editor-title")?;
         let visual = Rc::new(Cell::new(0));
         let pending = Rc::new(Cell::new(None));
+        let popups = Popups::new(
+            code.clone(),
+            element(&document, "editor-complete")?,
+            element(&document, "editor-hover")?,
+        );
 
         let refresh: Rc<dyn Fn()> = {
             let code = code.clone();
@@ -59,14 +66,44 @@ impl Editor {
         };
 
         let on_scroll = {
-            let code = code.clone();
+            let (code, popups) = (code.clone(), popups.clone());
             Closure::<dyn FnMut()>::new(move || {
                 backdrop.set_scroll_top(code.scroll_top());
                 backdrop.set_scroll_left(code.scroll_left());
+                popups.hide();
+                popups.hide_tooltip();
             })
         };
         code.set_onscroll(Some(on_scroll.as_ref().unchecked_ref()));
         on_scroll.forget();
+
+        // Moving the cursor or leaving the editor closes the popups.
+        let hide_popups = {
+            let popups = popups.clone();
+            Closure::<dyn FnMut()>::new(move || {
+                popups.hide();
+                popups.hide_tooltip();
+            })
+        };
+        code.set_onclick(Some(hide_popups.as_ref().unchecked_ref()));
+        code.set_onblur(Some(hide_popups.as_ref().unchecked_ref()));
+        hide_popups.forget();
+
+        let on_mousemove = {
+            let popups = popups.clone();
+            Closure::<dyn FnMut(MouseEvent)>::new(move |event: MouseEvent| {
+                popups.hover_at(event.offset_x() as f64, event.offset_y() as f64);
+            })
+        };
+        code.set_onmousemove(Some(on_mousemove.as_ref().unchecked_ref()));
+        on_mousemove.forget();
+
+        let on_mouseleave = {
+            let popups = popups.clone();
+            Closure::<dyn FnMut()>::new(move || popups.hide_tooltip())
+        };
+        code.set_onmouseleave(Some(on_mouseleave.as_ref().unchecked_ref()));
+        on_mouseleave.forget();
 
         let send = {
             let (proxy, code, visual) = (proxy.clone(), code.clone(), visual.clone());
@@ -93,28 +130,33 @@ impl Editor {
         };
 
         let on_input = {
-            let (refresh, schedule_compile) = (refresh.clone(), schedule_compile.clone());
-            Closure::<dyn FnMut()>::new(move || {
+            let (refresh, popups) = (refresh.clone(), popups.clone());
+            Closure::<dyn FnMut(Event)>::new(move |event: Event| {
                 refresh();
                 schedule_compile();
+                let kind = event.dyn_ref::<InputEvent>().map(InputEvent::input_type);
+                match kind.as_deref() {
+                    Some("insertText") => popups.update(true),
+                    Some(kind) if kind.starts_with("delete") => popups.update(false),
+                    _ => popups.hide(),
+                }
             })
         };
         code.set_oninput(Some(on_input.as_ref().unchecked_ref()));
         on_input.forget();
 
-        // Tab indents instead of moving the focus out of the editor.
         let on_keydown = {
-            let (code, refresh) = (code.clone(), refresh.clone());
+            let (code, popups) = (code.clone(), popups.clone());
             Closure::<dyn FnMut(KeyboardEvent)>::new(move |event: KeyboardEvent| {
-                if event.key() != "Tab" || event.ctrl_key() || event.alt_key() {
+                popups.hide_tooltip();
+                if popups.handle_key(&event) {
                     return;
                 }
-                event.prevent_default();
-                let start = code.selection_start().ok().flatten().unwrap_or(0);
-                let end = code.selection_end().ok().flatten().unwrap_or(start);
-                let _ = code.set_range_text_with_start_and_end_and_mode("    ", start, end, "end");
-                refresh();
-                schedule_compile();
+                // Tab indents instead of moving the focus out of the editor.
+                if event.key() == "Tab" && !event.ctrl_key() && !event.alt_key() {
+                    event.prevent_default();
+                    insert_text(&code, "    ");
+                }
             })
         };
         code.set_onkeydown(Some(on_keydown.as_ref().unchecked_ref()));
@@ -154,6 +196,7 @@ impl Editor {
             error: element(&document, "editor-error")?,
             error_line: element(&document, "editor-error-line")?,
             refresh,
+            popups,
             storage: window.local_storage().ok().flatten(),
             code,
             visual,
@@ -177,6 +220,8 @@ impl Editor {
         if let Some(timer) = self.pending.take() {
             web_sys::window().unwrap().clear_timeout_with_handle(timer);
         }
+        self.popups.hide();
+        self.popups.hide_tooltip();
         self.visual.set(visual);
         self.visuals.set_selected_index(visual as i32);
         self.code.set_value(source);
