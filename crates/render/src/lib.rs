@@ -1,13 +1,18 @@
 //! GPU renderer. Knows nothing about windows or audio: it takes a surface
 //! target and a size, and draws a frame from a [`Spectrum`].
 
+use std::sync::Arc;
+
 use analysis::{BAND_COUNT, Spectrum};
 use bytemuck::{Pod, Zeroable};
 
-/// Code shared by all visuals, prepended to each of them.
+/// Code shared by all visuals. Appended after each visual's code, so errors
+/// report line numbers matching what the user wrote (WGSL allows using
+/// declarations before they appear).
 const COMMON_SHADER: &str = include_str!("shaders/common.wgsl");
 
-/// Each visual is a fragment shader, cycled through with [`Renderer::next_visual`].
+/// Built-in visuals: each is a fragment shader defining `fs_main`, cycled
+/// through with [`Renderer::next_visual`].
 const VISUALS: &[(&str, &str)] = &[
     ("radial", include_str!("shaders/radial.wgsl")),
     ("bars", include_str!("shaders/bars.wgsl")),
@@ -27,15 +32,44 @@ struct Uniforms {
     _padding: f32,
 }
 
+struct Visual {
+    name: &'static str,
+    builtin: &'static str,
+    /// The source as last edited. It may not compile, in which case
+    /// `pipeline` still holds the last version that did.
+    source: String,
+    pipeline: wgpu::RenderPipeline,
+}
+
 pub struct Renderer {
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
-    pipelines: Vec<wgpu::RenderPipeline>,
+    pipeline_layout: wgpu::PipelineLayout,
+    visuals: Vec<Visual>,
     visual: usize,
     uniform_buffer: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
+}
+
+/// Checks that a visual's source compiles, returning a readable error with
+/// line numbers otherwise.
+pub fn validate_shader(source: &str) -> Result<(), String> {
+    let full = full_source(source);
+    let module = naga::front::wgsl::parse_str(&full)
+        .map_err(|e| e.emit_to_string_with_path(&full, "shader"))?;
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::empty(),
+    )
+    .validate(&module)
+    .map_err(|e| e.emit_to_string_with_path(&full, "shader"))?;
+    Ok(())
+}
+
+fn full_source(source: &str) -> String {
+    format!("{source}\n{COMMON_SHADER}")
 }
 
 impl Renderer {
@@ -77,6 +111,9 @@ impl Renderer {
             })
             .await
             .expect("failed to create device");
+        // Log GPU errors instead of panicking (the default). Shaders are
+        // validated before use, but a browser may still reject one.
+        device.on_uncaptured_error(Arc::new(|error| log::error!("GPU error: {error}")));
 
         let mut config = surface
             .get_default_config(&adapter, width.max(1), height.max(1))
@@ -115,52 +152,64 @@ impl Renderer {
             }],
         });
 
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("visuals"),
             bind_group_layouts: &[Some(&bind_group_layout)],
             ..Default::default()
         });
-        let pipelines = VISUALS
-            .iter()
-            .map(|(name, source)| {
-                let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                    label: Some(name),
-                    source: wgpu::ShaderSource::Wgsl(format!("{COMMON_SHADER}\n{source}").into()),
-                });
-                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some(name),
-                    layout: Some(&layout),
-                    vertex: wgpu::VertexState {
-                        module: &shader,
-                        entry_point: Some("vs_main"),
-                        compilation_options: Default::default(),
-                        buffers: &[],
-                    },
-                    fragment: Some(wgpu::FragmentState {
-                        module: &shader,
-                        entry_point: Some("fs_main"),
-                        compilation_options: Default::default(),
-                        targets: &[Some(config.format.into())],
-                    }),
-                    primitive: Default::default(),
-                    depth_stencil: None,
-                    multisample: Default::default(),
-                    multiview_mask: None,
-                    cache: None,
-                })
-            })
-            .collect();
 
-        Self {
+        let mut renderer = Self {
             surface,
             device,
             queue,
             config,
-            pipelines,
+            pipeline_layout,
+            visuals: Vec::new(),
             visual: 0,
             uniform_buffer,
             bind_group,
-        }
+        };
+        renderer.visuals = VISUALS
+            .iter()
+            .map(|&(name, builtin)| Visual {
+                name,
+                builtin,
+                source: builtin.to_owned(),
+                pipeline: renderer.create_pipeline(name, builtin),
+            })
+            .collect();
+        renderer
+    }
+
+    fn create_pipeline(&self, name: &str, source: &str) -> wgpu::RenderPipeline {
+        let shader = self
+            .device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some(name),
+                source: wgpu::ShaderSource::Wgsl(full_source(source).into()),
+            });
+        self.device
+            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(name),
+                layout: Some(&self.pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    compilation_options: Default::default(),
+                    buffers: &[],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    compilation_options: Default::default(),
+                    targets: &[Some(self.config.format.into())],
+                }),
+                primitive: Default::default(),
+                depth_stencil: None,
+                multisample: Default::default(),
+                multiview_mask: None,
+                cache: None,
+            })
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
@@ -174,8 +223,41 @@ impl Renderer {
 
     /// Switches to the next visual, wrapping around.
     pub fn next_visual(&mut self) {
-        self.visual = (self.visual + 1) % self.pipelines.len();
-        log::info!("visual: {}", VISUALS[self.visual].0);
+        self.visual = (self.visual + 1) % self.visuals.len();
+        log::info!("visual: {}", self.visuals[self.visual].name);
+    }
+
+    pub fn visual_count(&self) -> usize {
+        self.visuals.len()
+    }
+
+    /// Index of the visual being displayed.
+    pub fn current_visual(&self) -> usize {
+        self.visual
+    }
+
+    pub fn visual_name(&self, index: usize) -> &'static str {
+        self.visuals[index].name
+    }
+
+    /// The visual's source as last edited, which may not compile.
+    pub fn visual_source(&self, index: usize) -> &str {
+        &self.visuals[index].source
+    }
+
+    pub fn builtin_source(&self, index: usize) -> &'static str {
+        self.visuals[index].builtin
+    }
+
+    /// Replaces a visual's source. If it doesn't compile, the error is
+    /// returned and the visual keeps running its last working version.
+    pub fn set_visual_source(&mut self, index: usize, source: String) -> Result<(), String> {
+        let result = validate_shader(&source);
+        if result.is_ok() {
+            self.visuals[index].pipeline = self.create_pipeline(self.visuals[index].name, &source);
+        }
+        self.visuals[index].source = source;
+        result
     }
 
     /// `time` is in seconds since start, and drives the animations.
@@ -213,7 +295,7 @@ impl Renderer {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some(VISUALS[self.visual].0),
+                label: Some(self.visuals[self.visual].name),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &view,
                     depth_slice: None,
@@ -225,7 +307,7 @@ impl Renderer {
                 })],
                 ..Default::default()
             });
-            pass.set_pipeline(&self.pipelines[self.visual]);
+            pass.set_pipeline(&self.visuals[self.visual].pipeline);
             pass.set_bind_group(0, &self.bind_group, &[]);
             pass.draw(0..3, 0..1);
         }
@@ -235,5 +317,28 @@ impl Renderer {
         if suboptimal {
             self.surface.configure(&self.device, &self.config);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn builtin_visuals_compile() {
+        for (name, source) in VISUALS {
+            if let Err(error) = validate_shader(source) {
+                panic!("{name} does not compile:\n{error}");
+            }
+        }
+    }
+
+    #[test]
+    fn errors_point_at_the_users_line() {
+        let source =
+            "@fragment\nfn fs_main() -> @location(0) vec4<f32> {\n    return vec4<f32>(oops);\n}\n";
+        let error = validate_shader(source).unwrap_err();
+        assert!(error.contains("oops"), "{error}");
+        assert!(error.contains("shader:3:"), "{error}");
     }
 }

@@ -6,6 +6,8 @@ edition.workspace = true
 [dependencies]
 analysis.workspace = true
 bytemuck = { version = "1", features = ["derive"] }
+# Same version as wgpu's, to validate edited shaders with readable errors.
+naga = { version = "30", features = ["wgsl-in"] }
 wgpu.workspace = true
 log.workspace = true
 

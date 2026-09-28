@@ -1,4 +1,4 @@
-// Shared by every visual: prepended to each visual's shader source.
+// Shared by every visual: appended after each visual's shader source.
 
 const BAND_COUNT: u32 = 64u;
 const PI: f32 = 3.14159265;

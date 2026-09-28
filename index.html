@@ -15,6 +15,31 @@
         background: rgba(0, 0, 0, 0.6); color: #eee;
         font: 14px system-ui, sans-serif;
       }
+      #editor {
+        position: absolute; top: 12px; right: 12px; bottom: 12px; z-index: 1;
+        width: min(600px, 45vw);
+        display: none; flex-direction: column; gap: 8px;
+        padding: 8px; border-radius: 8px;
+        background: rgba(10, 10, 15, 0.85); color: #eee;
+        font: 14px system-ui, sans-serif;
+      }
+      #editor.open { display: flex; }
+      #editor-header { display: flex; gap: 8px; align-items: center; }
+      #editor-title { flex: 1; font-weight: 600; }
+      #editor-code {
+        flex: 1; resize: none; padding: 8px;
+        border: 1px solid #333; border-radius: 4px;
+        background: rgba(0, 0, 0, 0.5); color: #e6e6e6;
+        font: 13px/1.45 ui-monospace, Consolas, monospace;
+        tab-size: 4; white-space: pre; overflow: auto;
+      }
+      #editor-error, #editor-help pre {
+        margin: 0; overflow: auto;
+        font: 12px/1.4 ui-monospace, Consolas, monospace;
+      }
+      #editor-error { max-height: 30%; color: #ff8080; white-space: pre; }
+      #editor-help summary { cursor: pointer; color: #aaa; }
+      #editor-help pre { color: #ccc; padding-top: 6px; }
     </style>
   </head>
   <body>
@@ -22,6 +47,33 @@
       <input type="file" id="file" accept="audio/*" />
       <button id="play" disabled>Play</button>
       <span id="status">Choose an audio file</span>
+      <button id="edit">Edit shader</button>
+    </div>
+    <div id="editor">
+      <div id="editor-header">
+        <span id="editor-title"></span>
+        <button id="editor-reset" title="Restore the built-in version">Reset</button>
+        <button id="editor-close" title="Close">✕</button>
+      </div>
+      <textarea id="editor-code" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
+      <pre id="editor-error" hidden></pre>
+      <details id="editor-help">
+        <summary>Available inputs</summary>
+        <pre>fs_main runs once per pixel and returns its color (RGBA, 0..1).
+
+u.resolution    canvas size, in pixels
+u.time          seconds since start
+u.bass          average loudness below 250 Hz, 0..1
+u.mid           average loudness from 250 Hz to 4 kHz, 0..1
+u.treble        average loudness above 4 kHz, 0..1
+u.beat          1.0 on a beat, then fading out
+band(i)         loudness of band i, 0..1 (i from 0 to 63, low to high)
+band_at(t)      band loudness at t in 0..1, interpolated
+hue(h)          RGB color from a hue in 0..1
+BAND_COUNT, PI
+
+Edits recompile when you stop typing and are saved in this browser.</pre>
+      </details>
     </div>
   </body>
 </html>

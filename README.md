@@ -14,6 +14,8 @@ Live version: https://antaalt.github.io/ongakue/ (deployed from `main` by GitHub
 
 - Pick an audio file, then press **Play**
 - Click the visual or press **Space** to switch visuals
+- **Edit shader** opens the current visual's WGSL code: it recompiles as you type,
+  shows errors, and is saved in the browser (**Reset** restores the original)
 
 ## Running
 

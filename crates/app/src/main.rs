@@ -1,4 +1,5 @@
 mod audio;
+mod editor;
 
 use std::sync::Arc;
 
@@ -11,9 +12,16 @@ use winit::event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy};
 use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowId};
 
-/// Sent back to the event loop once the (async) GPU setup is done.
+/// Events sent to the event loop from outside of it.
+// The editor, which sends the shader events, only exists on the web.
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 enum UserEvent {
-    RendererReady(Renderer),
+    /// The (async) GPU setup is done.
+    RendererReady(Box<Renderer>),
+    /// The shader of a visual was edited.
+    ShaderEdited { visual: usize, source: String },
+    /// Restore a visual's built-in shader.
+    ShaderReset { visual: usize },
 }
 
 struct App {
@@ -21,6 +29,7 @@ struct App {
     window: Option<Arc<Window>>,
     renderer: Option<Renderer>,
     audio: audio::Backend,
+    editor: editor::Editor,
     samples: Box<[f32; audio::SAMPLE_COUNT]>,
     analyzer: Analyzer,
     start: Instant,
@@ -32,6 +41,20 @@ impl App {
         if let Some(renderer) = &mut self.renderer {
             renderer.next_visual();
         }
+        self.show_current_visual();
+    }
+
+    /// Loads the displayed visual's source into the editor.
+    fn show_current_visual(&self) {
+        let Some(renderer) = &self.renderer else {
+            return;
+        };
+        let visual = renderer.current_visual();
+        let source = renderer.visual_source(visual);
+        self.editor
+            .show(visual, renderer.visual_name(visual), source);
+        self.editor
+            .set_error(render::validate_shader(source).err().as_deref());
     }
 }
 
@@ -57,10 +80,10 @@ impl ApplicationHandler<UserEvent> for App {
         // Adapter/device requests are async: block natively, spawn on the web.
         #[cfg(target_arch = "wasm32")]
         wasm_bindgen_futures::spawn_local(async move {
-            let _ = proxy.send_event(UserEvent::RendererReady(init.await));
+            let _ = proxy.send_event(UserEvent::RendererReady(Box::new(init.await)));
         });
         #[cfg(not(target_arch = "wasm32"))]
-        let _ = proxy.send_event(UserEvent::RendererReady(pollster::block_on(init)));
+        let _ = proxy.send_event(UserEvent::RendererReady(Box::new(pollster::block_on(init))));
     }
 
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: UserEvent) {
@@ -72,7 +95,36 @@ impl ApplicationHandler<UserEvent> for App {
                     renderer.resize(size.width, size.height);
                     window.request_redraw();
                 }
-                self.renderer = Some(renderer);
+                // Restore the shaders edited in previous sessions.
+                for visual in 0..renderer.visual_count() {
+                    if let Some(source) = self.editor.saved_source(renderer.visual_name(visual)) {
+                        let _ = renderer.set_visual_source(visual, source);
+                    }
+                }
+                self.renderer = Some(*renderer);
+                self.show_current_visual();
+            }
+            UserEvent::ShaderEdited { visual, source } => {
+                let Some(renderer) = &mut self.renderer else {
+                    return;
+                };
+                let name = renderer.visual_name(visual);
+                if source == renderer.builtin_source(visual) {
+                    self.editor.forget_source(name);
+                } else {
+                    self.editor.save_source(name, &source);
+                }
+                let result = renderer.set_visual_source(visual, source);
+                self.editor.set_error(result.err().as_deref());
+            }
+            UserEvent::ShaderReset { visual } => {
+                let Some(renderer) = &mut self.renderer else {
+                    return;
+                };
+                self.editor.forget_source(renderer.visual_name(visual));
+                let builtin = renderer.builtin_source(visual).to_owned();
+                let _ = renderer.set_visual_source(visual, builtin);
+                self.show_current_visual();
             }
         }
     }
@@ -130,8 +182,11 @@ fn main() {
 
     let event_loop = EventLoop::<UserEvent>::with_user_event().build().unwrap();
     let audio = audio::Backend::new().expect("failed to initialize audio");
+    let editor =
+        editor::Editor::new(event_loop.create_proxy()).expect("failed to initialize editor");
     let app = App {
         proxy: event_loop.create_proxy(),
+        editor,
         window: None,
         renderer: None,
         analyzer: Analyzer::new(audio.sample_rate(), audio::SAMPLE_COUNT),

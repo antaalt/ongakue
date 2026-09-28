@@ -26,11 +26,15 @@ web-sys = { version = "0.3", features = [
     "AudioScheduledSourceNode",
     "Blob",
     "Document",
+    "DomTokenList",
     "File",
     "FileList",
     "HtmlButtonElement",
     "HtmlElement",
     "HtmlInputElement",
+    "HtmlTextAreaElement",
+    "KeyboardEvent",
+    "Storage",
     "Window",
 ] }
 
