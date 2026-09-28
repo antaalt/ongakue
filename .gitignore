@@ -22,3 +22,6 @@ target
 
 # Trunk build output
 dist
+
+# vscode specifics
+.vscode
