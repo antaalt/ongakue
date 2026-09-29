@@ -136,6 +136,13 @@ impl Tuning {
                 }
             }
         })?;
+        on_click(&document, "tuning-close", {
+            let panel = panel.clone();
+            move || {
+                let panel = panel.clone();
+                let _ = panel.class_list().remove_1("open");
+            }
+        })?;
         on_click(&document, "tune", {
             let panel = panel.clone();
             move || {

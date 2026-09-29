@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Ongakue</title>
+    <link data-trunk rel="rust" href="../crates/app/Cargo.toml" data-bin="ongakue" />
+    <link data-trunk rel="scss" href="style/index.scss"/>
+  </head>
+  <body>
+    <div id="controls">
+      <input type="file" id="file" accept="audio/*" />
+      <button id="play" disabled>Play</button>
+      <span id="status">Choose an audio file</span>
+      <button id="tune">Tuning</button>
+      <button id="edit">Edit shader</button>
+    </div>
+    <div id="tuning" class="window">
+      <div id="tuning-header">
+        <button id="tuning-reset">Reset to defaults</button>
+        <button id="tuning-close" class="close" title="Close"></button>
+      </div>
+      <div id="tuning-body">
+        <div id="tuning-sliders"></div>
+        <h3>Beat detection, last 5 seconds</h3>
+        <canvas id="tuning-plot" width="552" height="180"></canvas>
+        <div id="tuning-legend">
+          <span style="color: #8be9fd">— bass rise</span>
+          <span style="color: #ff6b6b">— threshold</span>
+          <span style="color: #ffaa3c">| beat</span>
+        </div>
+      </div>
+    </div>
+    <div id="editor" class="window">
+      <div id="editor-header">
+        <select id="editor-title"></select>
+        <button id="editor-close" class="close" title="Close"></button>
+      </div>
+      <div id="editor-body">
+        <pre id="editor-gutter" aria-hidden="true"></pre>
+        <pre id="editor-backdrop" aria-hidden="true"><div id="editor-error-line" hidden></div><code id="editor-highlight"></code></pre>
+        <textarea id="editor-code" wrap="off" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
+        <div id="editor-complete" hidden></div>
+        <div id="editor-hover" hidden></div>
+      </div>
+      <pre id="editor-error" hidden></pre>
+      <details id="editor-help">
+        <summary>Available inputs</summary>
+        <pre>fs_main runs once per pixel and returns its color (RGBA, 0..1).
+
+u.resolution    canvas size, in pixels
+u.time          seconds since start
+u.bass          average loudness below 250 Hz, 0..1
+u.mid           average loudness from 250 Hz to 4 kHz, 0..1
+u.treble        average loudness above 4 kHz, 0..1
+u.beat          1.0 on a beat, then fading out
+u.params        4 free values, 0..1, set in the Tuning panel (.x .y .z .w)
+band(i)         loudness of band i, 0..1 (i from 0 to 63, low to high)
+band_at(t)      band loudness at t in 0..1, interpolated
+hue(h)          RGB color from a hue in 0..1
+BAND_COUNT, PI
+
+Suggestions appear as you type (↑ ↓ to pick, Enter or Tab to accept, Esc to
+close). Hover a name to see what it does.
+
+Edits recompile when you stop typing and are saved in this browser.</pre>
+      </details>
+    </div>
+  </body>
+</html>

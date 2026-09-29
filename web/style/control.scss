@@ -1,0 +1,28 @@
+
+#controls {
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    z-index: 1;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    padding: 8px 12px;
+    border-radius: 8px;
+    background: $primary-background;
+    color: $text-color;
+    font: 14px system-ui, sans-serif;
+
+    #status {
+        text-wrap: nowrap;
+    }
+}
+
+@media (max-width: 700px) {
+  #controls {
+    display: inline-block;
+    text-wrap: nowrap;
+    overflow: scroll;
+    width: calc(100% - 48px);
+  }
+}

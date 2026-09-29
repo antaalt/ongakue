@@ -192,14 +192,14 @@ impl Editor {
         on_click(&document, "editor-close", move || {
             let _ = panel.class_list().remove_1("open");
         })?;
-        on_click(&document, "editor-reset", {
+        /*on_click(&document, "editor-reset", {
             let visual = visual.clone();
             move || {
                 let _ = proxy.send_event(UserEvent::ShaderReset {
                     visual: visual.get(),
                 });
             }
-        })?;
+        })?;*/
 
         Ok(Self {
             visuals,

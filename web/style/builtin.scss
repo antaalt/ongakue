@@ -1,0 +1,100 @@
+
+button, input[type="file"]::file-selector-button {
+    color: $primary-color;
+    padding: 4px;
+    border: 2px solid $primary-color;
+    border-radius: 14px;
+    font-size: 1rem;
+    background: transparent;
+    cursor: pointer;
+    transition: background .18s ease;
+    text-wrap: nowrap;
+    overflow: hidden;
+    &:hover {
+        color:$text-color;
+        background: $primary-color;
+    }
+}
+button.close {
+    position: relative;
+    width: 30px;
+    height: 30px;
+    &:before, &:after {
+        content: "";
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        width: 16px;
+        height: 2px;
+        border-radius: 2px;
+        background: $primary-color;
+        transition: transform .18s ease,background .18s ease;
+    }
+    &:before {
+        transform: translate(-50%,-50%) rotate(45deg);
+    }
+    &:after {
+        transform: translate(-50%,-50%) rotate(-45deg);
+    }
+    &:hover {
+        background: $primary-color;
+        &:before, &:after {
+            background: $text-color;
+        }
+    }
+}
+
+input[type="range"] {
+    -webkit-appearance: none;
+    width: 100%;
+    background: transparent;
+    cursor: pointer;
+    // Webkit
+    &::-webkit-slider-runnable-track {
+        height: 4px;
+        border-radius: 8px;
+        border: 0px solid $text-color;
+        background: $primary-color;
+    }
+    &::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        height: 16px;
+        width: 16px;
+        border: 1px solid $primary-color;
+        border-radius: 50%;
+        background: $primary-background;
+        margin-top: -7px;
+    }
+    // Firefox
+    &::-moz-range-thumb {
+        height: 16px;
+        width: 16px;
+        border: 1px solid $primary-color;
+        border-radius: 50%;
+        background: $primary-background;
+        margin-top: -7px;
+    }
+    &::-moz-range-track {
+        height: 4px;
+        border-radius: 8px;
+        border: 0px solid $text-color;
+        background: $primary-color;
+    }
+}
+button:disabled {
+    border-color: $secondary-background;
+    color: $secondary-background;
+    cursor: auto;
+    &:hover {
+        color:$secondary-background;
+        background: transparent;
+    }
+}
+select {
+    background-color: $primary-background;
+    color: $primary-color;
+    padding: 4px;
+    border: 2px solid $primary-color;
+    border-radius: 14px;
+    font-size: 1rem;
+}

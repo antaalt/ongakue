@@ -1,0 +1,43 @@
+
+html,
+body {
+    margin: 0;
+    height: 100%;
+    overflow: hidden;
+    background: #000;
+}
+
+$text-color: #eee;
+// colors
+$primary-color: #ff8800;
+$secondary-color: #0099ff;
+// background
+$primary-background: #111;
+$secondary-background: #333;
+
+canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+}
+
+.window {
+    background: $primary-background;
+    color: $text-color;
+    font: 14px system-ui, sans-serif;
+    padding: 8px 12px;
+    gap: 8px;
+    border-radius: 8px;
+    box-sizing: border-box;
+    flex-direction: column;
+    display: none;
+    &.open {
+        display: flex;
+    }
+}
+
+@import 'builtin';
+
+@import 'control';
+@import 'editor';
+@import 'tuning';
