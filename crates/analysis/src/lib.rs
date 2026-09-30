@@ -374,17 +374,23 @@ mod tests {
 
     #[test]
     fn sine_peaks_in_matching_band() {
-        for frequency in [50.0, 120.0, 440.0, 1000.0, 3000.0, 8000.0, 14000.0] {
-            let mut analyzer = Analyzer::new(SAMPLE_RATE, FFT_SIZE);
+        // Both window sizes the app uses: the smaller one reacts faster.
+        for (fft_size, frequency) in [FFT_SIZE, FFT_SIZE / 2].into_iter().flat_map(|size| {
+            [50.0, 120.0, 440.0, 1000.0, 3000.0, 8000.0, 14000.0].map(|frequency| (size, frequency))
+        }) {
+            let mut analyzer = Analyzer::new(SAMPLE_RATE, fft_size);
             // Quiet enough that nearby bands don't all clip at 1.0.
-            let spectrum = analyzer.process(&sine(frequency, 0.01), FRAME).clone();
+            let samples = sine(frequency, 0.01);
+            let spectrum = analyzer
+                .process(&samples[FFT_SIZE - fft_size..], FRAME)
+                .clone();
             let found = analyzer.band_center(loudest_band(&spectrum));
             // Precision is limited by the FFT bin width in the lows and by the
             // band width in the highs.
             let tolerance = analyzer.bin_width().max(frequency * 0.15);
             assert!(
                 (found - frequency).abs() <= tolerance,
-                "{frequency} Hz peaked in the band centered on {found} Hz"
+                "{frequency} Hz peaked in the band centered on {found} Hz ({fft_size} samples)"
             );
         }
     }
@@ -459,24 +465,37 @@ mod tests {
     /// Feeds `signal` frame by frame, as the app does at 60 fps, and counts
     /// the frames where a beat starts.
     fn count_beats(signal: &[f32], settings: Settings) -> usize {
+        beat_times(signal, settings, FFT_SIZE).len()
+    }
+
+    /// Feeds `signal` frame by frame, as the app does at 60 fps, with windows
+    /// of `fft_size` samples, and returns when beats are detected: the time of
+    /// the newest sample analyzed, in seconds.
+    fn beat_times(signal: &[f32], settings: Settings, fft_size: usize) -> Vec<f32> {
         let hop = (SAMPLE_RATE * FRAME) as usize;
-        let mut analyzer = Analyzer::new(SAMPLE_RATE, FFT_SIZE);
+        let mut analyzer = Analyzer::new(SAMPLE_RATE, fft_size);
         analyzer.settings = settings;
-        (FFT_SIZE..signal.len())
+        (fft_size..signal.len())
             .step_by(hop)
-            .filter(|&end| analyzer.process(&signal[end - FFT_SIZE..end], FRAME).beat == 1.0)
-            .count()
+            .filter(|&end| analyzer.process(&signal[end - fft_size..end], FRAME).beat == 1.0)
+            .map(|end| end as f32 / SAMPLE_RATE)
+            .collect()
     }
 
     /// A quiet steady tone, plus a decaying 60 Hz kick every 0.5 s from
     /// 0.25 s on: 8 kicks in total.
     fn kicks() -> Vec<f32> {
-        let len = (SAMPLE_RATE * 4.0) as usize;
+        kicks_every(0.5, 4.0)
+    }
+
+    /// Like [`kicks`], with a kick every `period` seconds during `duration`.
+    fn kicks_every(period: f32, duration: f32) -> Vec<f32> {
+        let len = (SAMPLE_RATE * duration) as usize;
         (0..len)
             .map(|i| {
                 let t = i as f32 / SAMPLE_RATE;
                 let tone = 0.02 * (std::f32::consts::TAU * 1000.0 * t).sin();
-                let since_kick = (t - 0.25).rem_euclid(0.5);
+                let since_kick = (t - 0.25).rem_euclid(period);
                 let kick = if t >= 0.25 {
                     0.5 * (-since_kick / 0.08).exp()
                         * (std::f32::consts::TAU * 60.0 * since_kick).sin()
@@ -491,6 +510,31 @@ mod tests {
     #[test]
     fn detects_kicks() {
         assert_eq!(count_beats(&kicks(), Settings::default()), 8);
+    }
+
+    /// Average time from a kick's start to its detection, with a window of
+    /// `fft_size` samples. Kicks come every 0.51 s, so they land at different
+    /// moments within the 60 fps frames.
+    fn detection_delay(fft_size: usize) -> f32 {
+        let period = 0.51;
+        let times = beat_times(&kicks_every(period, 10.0), Settings::default(), fft_size);
+        // From 0.25 s to 10 s: 20 kicks.
+        assert_eq!(times.len(), 20, "{fft_size} samples: {times:?}");
+        let delays: Vec<f32> = times
+            .iter()
+            .map(|&time| (time - 0.25).rem_euclid(period))
+            .collect();
+        delays.iter().sum::<f32>() / delays.len() as f32
+    }
+
+    #[test]
+    fn smaller_window_detects_kicks_sooner() {
+        let (normal, fast) = (detection_delay(FFT_SIZE), detection_delay(FFT_SIZE / 2));
+        eprintln!(
+            "average detection delay: {normal:.4} s with {FFT_SIZE} samples, {fast:.4} s with {}",
+            FFT_SIZE / 2
+        );
+        assert!(fast < normal, "{fast} vs {normal}");
     }
 
     #[test]
