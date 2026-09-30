@@ -31,7 +31,12 @@ struct Uniforms {
     treble: f32,
     _padding: f32,
     params: [f32; 4],
+    notes: [[f32; 4]; MIDI_COUNT / 4],
+    controls: [[f32; 4]; MIDI_COUNT / 4],
 }
+
+/// Number of MIDI notes and controllers shaders can read.
+pub const MIDI_COUNT: usize = 128;
 
 struct Visual {
     name: &'static str,
@@ -53,6 +58,8 @@ pub struct Renderer {
     uniform_buffer: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
     params: [f32; 4],
+    notes: [f32; MIDI_COUNT],
+    controls: [f32; MIDI_COUNT],
 }
 
 /// Why a shader doesn't compile.
@@ -190,6 +197,8 @@ impl Renderer {
             uniform_buffer,
             bind_group,
             params: [0.0; 4],
+            notes: [0.0; MIDI_COUNT],
+            controls: [0.0; MIDI_COUNT],
         };
         renderer.visuals = VISUALS
             .iter()
@@ -277,6 +286,12 @@ impl Renderer {
         self.params = params;
     }
 
+    /// MIDI values shaders read with `note(n)` and `cc(n)`, 0..1 each.
+    pub fn set_midi(&mut self, notes: &[f32; MIDI_COUNT], controls: &[f32; MIDI_COUNT]) {
+        self.notes = *notes;
+        self.controls = *controls;
+    }
+
     /// Replaces a visual's source. If it doesn't compile, the error is
     /// returned and the visual keeps running its last working version.
     pub fn set_visual_source(&mut self, index: usize, source: String) -> Result<(), ShaderError> {
@@ -314,6 +329,8 @@ impl Renderer {
             treble: spectrum.treble,
             _padding: 0.0,
             params: self.params,
+            notes: bytemuck::cast(self.notes),
+            controls: bytemuck::cast(self.controls),
         };
         bytemuck::cast_slice_mut::<_, f32>(&mut uniforms.bands).copy_from_slice(&spectrum.bands);
         self.queue

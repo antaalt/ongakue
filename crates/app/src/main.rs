@@ -1,5 +1,6 @@
 mod audio;
 mod editor;
+mod midi;
 mod tuning;
 
 use std::sync::Arc;
@@ -33,6 +34,7 @@ struct App {
     audio: audio::Backend,
     editor: editor::Editor,
     tuning: tuning::Tuning,
+    midi: midi::Midi,
     samples: Box<[f32; audio::SAMPLE_COUNT]>,
     analyzer: Analyzer,
     start: Instant,
@@ -148,14 +150,20 @@ impl ApplicationHandler<UserEvent> for App {
                 let dt = (now - self.last_frame).as_secs_f32().min(0.1);
                 self.last_frame = now;
 
+                let midi = self.midi.frame(dt);
+                self.tuning.apply_midi(&midi.controls, midi.moved);
+
                 self.audio.latest_samples(&mut self.samples);
                 self.analyzer.settings = self.tuning.settings();
-                let spectrum = self.analyzer.process(&self.samples[..], dt);
+                self.analyzer.process(&self.samples[..], dt);
+                // Held MIDI notes light their frequency's band too.
+                let spectrum = self.analyzer.add_notes(&midi.notes);
                 let beat = spectrum.beat == 1.0;
                 let time = (now - self.start).as_secs_f32();
 
                 if let Some(renderer) = &mut self.renderer {
                     renderer.set_params(self.tuning.params());
+                    renderer.set_midi(&midi.notes, &midi.controls);
                     renderer.render(spectrum, time);
                 }
                 self.tuning.record(
@@ -188,10 +196,12 @@ fn main() {
     let editor =
         editor::Editor::new(event_loop.create_proxy()).expect("failed to initialize editor");
     let tuning = tuning::Tuning::new().expect("failed to initialize the tuning panel");
+    let midi = midi::Midi::new().expect("failed to initialize MIDI");
     let app = App {
         proxy: event_loop.create_proxy(),
         editor,
         tuning,
+        midi,
         window: None,
         renderer: None,
         analyzer: Analyzer::new(audio.sample_rate(), audio::SAMPLE_COUNT),

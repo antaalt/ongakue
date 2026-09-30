@@ -9,9 +9,16 @@
   </head>
   <body>
     <div id="controls">
-      <input type="file" id="file" accept="audio/*" />
-      <button id="play" disabled>Play</button>
+      <select id="source" title="Where the sound comes from">
+        <option value="file">File</option>
+        <option value="microphone">Microphone</option>
+      </select>
+      <span id="file-controls">
+        <input type="file" id="file" accept="audio/*" />
+        <button id="play" disabled>Play</button>
+      </span>
       <span id="status">Choose an audio file</span>
+      <button id="midi" title="Use a MIDI keyboard or controller">MIDI</button>
       <button id="tune">Tuning</button>
       <button id="edit">Edit shader</button>
     </div>
@@ -58,6 +65,8 @@ u.params        4 free values, 0..1, set in the Tuning panel (.x .y .z .w)
 band(i)         loudness of band i, 0..1 (i from 0 to 63, low to high)
 band_at(t)      band loudness at t in 0..1, interpolated
 hue(h)          RGB color from a hue in 0..1
+note(n)         MIDI note n (60 = middle C): velocity 0..1, fading after release
+cc(n)           MIDI controller n (knob, fader): 0..1
 BAND_COUNT, PI
 
 Suggestions appear as you type (↑ ↓ to pick, Enter or Tab to accept, Esc to

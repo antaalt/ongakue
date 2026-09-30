@@ -1,9 +1,15 @@
-//! Browser audio through the Web Audio API.
+//! Browser audio through the Web Audio API, from a file or the microphone.
 //!
-//! Graph: AudioBufferSourceNode -> AnalyserNode -> speakers. The analyser taps
-//! what is actually being played, so the visuals stay in sync with the sound.
+//! Graph:
+//! - file: AudioBufferSourceNode -> AnalyserNode, and -> speakers
+//! - microphone: MediaStreamAudioSourceNode -> AnalyserNode only (playing it
+//!   back would cause feedback)
 //!
-//! The controls (`#file`, `#play`, `#status`) are defined in `index.html`.
+//! The analyser taps what is actually being played or heard, so the visuals
+//! stay in sync with the sound.
+//!
+//! The controls (`#source`, `#file-controls`, `#file`, `#play`, `#status`)
+//! are defined in `index.html`.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -13,6 +19,8 @@ use wasm_bindgen_futures::JsFuture;
 use web_sys::{
     AnalyserNode, AudioBuffer, AudioBufferSourceNode, AudioContext, AudioContextState,
     AudioScheduledSourceNode, Document, HtmlButtonElement, HtmlElement, HtmlInputElement,
+    HtmlSelectElement, MediaStream, MediaStreamAudioSourceNode, MediaStreamConstraints,
+    MediaStreamTrack,
 };
 
 /// Number of samples returned by [`Backend::latest_samples`].
@@ -23,14 +31,23 @@ pub struct Backend {
     sample_rate: f32,
 }
 
+struct Microphone {
+    stream: MediaStream,
+    node: MediaStreamAudioSourceNode,
+}
+
 struct State {
     ctx: AudioContext,
     analyser: AnalyserNode,
     buffer: Option<AudioBuffer>,
+    /// Name of the decoded file, to show again when switching back to it.
+    file_name: Option<String>,
     /// The node currently playing (or paused), if any. A source node can only
     /// be started once, so a new one is created each time playback restarts.
     source: Option<AudioBufferSourceNode>,
+    microphone: Option<Microphone>,
     play_button: HtmlButtonElement,
+    file_controls: HtmlElement,
     status: HtmlElement,
 }
 
@@ -42,14 +59,16 @@ impl Backend {
         let ctx = AudioContext::new()?;
         let analyser = ctx.create_analyser()?;
         analyser.set_fft_size(SAMPLE_COUNT as u32);
-        analyser.connect_with_audio_node(&ctx.destination())?;
 
         let state = Rc::new(RefCell::new(State {
             ctx,
             analyser: analyser.clone(),
             buffer: None,
+            file_name: None,
             source: None,
+            microphone: None,
             play_button: element(&document, "play")?,
+            file_controls: element(&document, "file-controls")?,
             status: element(&document, "status")?,
         }));
 
@@ -86,6 +105,20 @@ impl Backend {
             .set_onclick(Some(on_click.as_ref().unchecked_ref()));
         on_click.forget();
 
+        let source_select: HtmlSelectElement = element(&document, "source")?;
+        let on_source = {
+            let (state, select) = (state.clone(), source_select.clone());
+            Closure::<dyn FnMut()>::new(move || {
+                if select.value() == "microphone" {
+                    wasm_bindgen_futures::spawn_local(use_microphone(state.clone()));
+                } else {
+                    state.borrow_mut().use_file();
+                }
+            })
+        };
+        source_select.set_onchange(Some(on_source.as_ref().unchecked_ref()));
+        on_source.forget();
+
         let sample_rate = state.borrow().ctx.sample_rate();
         Ok(Self {
             analyser,
@@ -108,6 +141,7 @@ async fn load_file(state: Rc<RefCell<State>>, file: web_sys::File) {
         let mut s = state.borrow_mut();
         s.stop_source();
         s.buffer = None;
+        s.file_name = None;
         s.play_button.set_disabled(true);
         s.play_button.set_text_content(Some("Play"));
         s.status.set_text_content(Some("Decoding…"));
@@ -125,6 +159,7 @@ async fn load_file(state: Rc<RefCell<State>>, file: web_sys::File) {
     match decoded {
         Ok(buffer) => {
             s.buffer = Some(buffer);
+            s.file_name = Some(file.name());
             s.play_button.set_disabled(false);
             s.status.set_text_content(Some(&file.name()));
         }
@@ -146,6 +181,7 @@ fn toggle_playback(state: &Rc<RefCell<State>>) -> Result<(), JsValue> {
         let source = s.ctx.create_buffer_source()?;
         source.set_buffer(Some(&buffer));
         source.connect_with_audio_node(&s.analyser)?;
+        source.connect_with_audio_node(&s.ctx.destination())?;
 
         let on_ended = {
             let state = state.clone();
@@ -171,6 +207,73 @@ fn toggle_playback(state: &Rc<RefCell<State>>) -> Result<(), JsValue> {
     Ok(())
 }
 
+async fn use_microphone(state: Rc<RefCell<State>>) {
+    let ctx = {
+        let mut s = state.borrow_mut();
+        s.stop_source();
+        s.play_button.set_text_content(Some("Play"));
+        s.file_controls.set_hidden(true);
+        s.status
+            .set_text_content(Some("Waiting for the microphone…"));
+        // Resume right away, while the choice still counts as a user gesture.
+        let _ = s.ctx.resume();
+        s.ctx.clone()
+    };
+
+    let stream = async {
+        let devices = web_sys::window().unwrap().navigator().media_devices()?;
+        let stream =
+            JsFuture::from(devices.get_user_media_with_constraints(&constraints())?).await?;
+        Ok::<MediaStream, JsValue>(stream.unchecked_into())
+    }
+    .await;
+
+    let mut s = state.borrow_mut();
+    // The source may have been switched back to the file while waiting.
+    if !s.file_controls.hidden() {
+        if let Ok(stream) = stream {
+            stop_tracks(&stream);
+        }
+        return;
+    }
+    let microphone = stream.and_then(|stream| {
+        let node = ctx.create_media_stream_source(&stream)?;
+        node.connect_with_audio_node(&s.analyser)?;
+        Ok(Microphone { stream, node })
+    });
+    match microphone {
+        Ok(microphone) => {
+            s.microphone = Some(microphone);
+            let _ = ctx.resume();
+            s.status
+                .set_text_content(Some("Listening to the microphone"));
+        }
+        Err(e) => {
+            log::warn!("microphone unavailable: {e:?}");
+            s.status
+                .set_text_content(Some("Microphone unavailable or not allowed"));
+        }
+    }
+}
+
+/// Raw sound: the processing meant for calls (echo cancellation, noise
+/// suppression, automatic gain) would distort the music.
+fn constraints() -> MediaStreamConstraints {
+    let audio = js_sys::Object::new();
+    for setting in ["echoCancellation", "noiseSuppression", "autoGainControl"] {
+        let _ = js_sys::Reflect::set(&audio, &setting.into(), &false.into());
+    }
+    let constraints = MediaStreamConstraints::new();
+    constraints.set_audio(&audio);
+    constraints
+}
+
+fn stop_tracks(stream: &MediaStream) {
+    for track in stream.get_tracks() {
+        track.unchecked_into::<MediaStreamTrack>().stop();
+    }
+}
+
 impl State {
     fn stop_source(&mut self) {
         if let Some(source) = self.source.take() {
@@ -179,6 +282,17 @@ impl State {
             scheduled.set_onended(None);
             let _ = scheduled.stop();
         }
+    }
+
+    fn use_file(&mut self) {
+        if let Some(microphone) = self.microphone.take() {
+            microphone.node.disconnect().ok();
+            // Also turns off the browser's "recording" indicator.
+            stop_tracks(&microphone.stream);
+        }
+        self.file_controls.set_hidden(false);
+        let status = self.file_name.as_deref().unwrap_or("Choose an audio file");
+        self.status.set_text_content(Some(status));
     }
 }
 

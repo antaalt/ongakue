@@ -16,6 +16,9 @@ struct Uniforms {
     treble: f32,
     // Free parameters, e.g. set from sliders.
     params: vec4<f32>,
+    // MIDI notes and controllers, packed like the bands.
+    notes: array<vec4<f32>, 32>,
+    controls: array<vec4<f32>, 32>,
 };
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
@@ -36,6 +39,19 @@ fn band_at(t: f32) -> f32 {
     let x = clamp(t, 0.0, 1.0) * f32(BAND_COUNT - 1u);
     let i = u32(x);
     return mix(band(i), band(min(i + 1u, BAND_COUNT - 1u)), fract(x));
+}
+
+// MIDI note n (60 = middle C): its velocity (0..1) while held, then fading
+// out after release.
+fn note(n: u32) -> f32 {
+    let i = min(n, 127u);
+    return u.notes[i / 4u][i % 4u];
+}
+
+// MIDI controller n (a knob or fader): its position, 0..1.
+fn cc(n: u32) -> f32 {
+    let i = min(n, 127u);
+    return u.controls[i / 4u][i % 4u];
 }
 
 fn hue(h: f32) -> vec3<f32> {

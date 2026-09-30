@@ -4,11 +4,15 @@
 //!
 //! Slider values are shared with the app, which reads them every frame, so
 //! changes apply on the next frame.
+//!
+//! Each shader parameter can be linked to a MIDI knob ("learn"): click its
+//! MIDI button, turn a knob, and the slider follows that knob.
 
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
 
+use crate::midi::MIDI_COUNT;
 use analysis::Settings;
 use wasm_bindgen::prelude::*;
 use web_sys::{
@@ -18,6 +22,9 @@ use web_sys::{
 
 /// Seconds of beat detector history shown in the plot.
 const HISTORY: f32 = 5.0;
+
+/// Number of shader parameters, `u.params`: the first section's sliders.
+const PARAM_COUNT: usize = 4;
 
 #[derive(Clone, Copy, Default)]
 struct Values {
@@ -72,9 +79,40 @@ struct Entry {
     beat: bool,
 }
 
+/// A shader parameter's slider, with its MIDI button.
+struct ParamRow {
+    slider: &'static Slider,
+    input: HtmlInputElement,
+    output: HtmlElement,
+    button: HtmlButtonElement,
+}
+
+/// Which MIDI controller drives each shader parameter.
+#[derive(Default)]
+struct Links {
+    controllers: [Option<u8>; PARAM_COUNT],
+    /// The parameter waiting for a knob to be turned.
+    learning: Option<usize>,
+}
+
+impl Links {
+    fn show(&self, rows: &[ParamRow]) {
+        for (i, row) in rows.iter().enumerate() {
+            let label = match (self.learning == Some(i), self.controllers[i]) {
+                (true, _) => "Turn a knob".to_owned(),
+                (false, Some(controller)) => format!("CC {controller}"),
+                (false, None) => "MIDI".to_owned(),
+            };
+            row.button.set_text_content(Some(&label));
+        }
+    }
+}
+
 pub struct Tuning {
     panel: HtmlElement,
     values: Rc<RefCell<Values>>,
+    params: Rc<Vec<ParamRow>>,
+    links: Rc<RefCell<Links>>,
     plot: RefCell<Plot>,
 }
 
@@ -87,7 +125,8 @@ impl Tuning {
 
         // Each slider with the element showing its value, to reset them.
         let mut inputs = Vec::new();
-        for (title, sliders) in SECTIONS {
+        let mut params = Vec::new();
+        for (section, (title, sliders)) in SECTIONS.iter().enumerate() {
             let heading = document.create_element("h3")?;
             heading.set_text_content(Some(title));
             container.append_child(&heading)?;
@@ -95,6 +134,8 @@ impl Tuning {
             for slider in *sliders {
                 let row = document.create_element("label")?;
                 row.set_class_name("slider");
+                // The first section is the shader parameters.
+                let is_param = section == 0;
                 let label = document.create_element("span")?;
                 label.set_text_content(Some(slider.label));
                 let input: HtmlInputElement = document.create_element("input")?.dyn_into()?;
@@ -106,6 +147,21 @@ impl Tuning {
                 row.append_child(&label)?;
                 row.append_child(&input)?;
                 row.append_child(&output)?;
+                if is_param {
+                    let button: HtmlButtonElement =
+                        document.create_element("button")?.dyn_into()?;
+                    button.set_class_name("learn");
+                    button.set_title("Link to a MIDI knob: click, then turn the knob");
+                    button.set_text_content(Some("MIDI"));
+                    row.append_child(&button)?;
+                    row.set_class_name("slider learnable");
+                    params.push(ParamRow {
+                        slider,
+                        input: input.clone(),
+                        output: output.clone(),
+                        button,
+                    });
+                }
                 container.append_child(&row)?;
 
                 let value = *(slider.value)(&mut values.borrow_mut());
@@ -123,6 +179,26 @@ impl Tuning {
                 on_input.forget();
                 inputs.push((slider, input, output));
             }
+        }
+
+        let params = Rc::new(params);
+        let links = Rc::new(RefCell::new(Links::default()));
+        for (i, row) in params.iter().enumerate() {
+            let (params, links) = (params.clone(), links.clone());
+            let on_learn = Closure::<dyn FnMut()>::new(move || {
+                let mut links = links.borrow_mut();
+                if links.learning == Some(i) {
+                    // Clicked again while waiting: unlink.
+                    links.learning = None;
+                    links.controllers[i] = None;
+                } else {
+                    links.learning = Some(i);
+                }
+                links.show(&params);
+            });
+            row.button
+                .set_onclick(Some(on_learn.as_ref().unchecked_ref()));
+            on_learn.forget();
         }
 
         on_click(&document, "tuning-reset", {
@@ -158,6 +234,8 @@ impl Tuning {
         Ok(Self {
             panel,
             values,
+            params,
+            links,
             plot: RefCell::new(Plot {
                 canvas,
                 context,
@@ -172,6 +250,28 @@ impl Tuning {
 
     pub fn params(&self) -> [f32; 4] {
         self.values.borrow().params
+    }
+
+    /// Moves the shader parameters linked to MIDI knobs. `moved` is the last
+    /// controller moved this frame, linked to the parameter learning one.
+    pub fn apply_midi(&self, controls: &[f32; MIDI_COUNT], moved: Option<u8>) {
+        let mut links = self.links.borrow_mut();
+        if let (Some(param), Some(controller)) = (links.learning, moved) {
+            links.controllers[param] = Some(controller);
+            links.learning = None;
+            links.show(&self.params);
+        }
+        let mut values = self.values.borrow_mut();
+        for (i, row) in self.params.iter().enumerate() {
+            let Some(controller) = links.controllers[i] else {
+                continue;
+            };
+            let value = controls[usize::from(controller)];
+            if values.params[i] != value {
+                values.params[i] = value;
+                show_value(row.slider, &row.input, &row.output, value);
+            }
+        }
     }
 
     /// Adds a frame of beat detector state to the plot. `time` is in seconds.

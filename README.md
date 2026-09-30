@@ -12,13 +12,18 @@ Live version: https://antaalt.github.io/ongakue/ (deployed from `main` by GitHub
 
 ## Controls
 
-- Pick an audio file, then press **Play**
+- Choose the sound source: a **File** (pick one, then press **Play**) or the
+  **Microphone** (or any audio input, e.g. an instrument through an audio interface)
+- **MIDI** connects MIDI keyboards and controllers (Chrome, Edge, Firefox): held
+  notes light their frequency in the spectrum, and shaders read them with
+  `note(n)` and knobs with `cc(n)`
 - **Edit shader** opens the current visual's WGSL code, with a picker at the top to
   switch visuals: it recompiles as you type, shows errors, and is saved in the
   browser. It suggests names as you type
   (↑ ↓, Enter or Tab to accept) and explains the name under the mouse
 - **Tuning** opens sliders for the analysis settings and the shaders' free
-  parameters (`u.params`), with a live plot of the beat detection
+  parameters (`u.params`), with a live plot of the beat detection. Each
+  parameter's **MIDI** button links it to a knob: click it, then turn the knob
 
 ## Running
 

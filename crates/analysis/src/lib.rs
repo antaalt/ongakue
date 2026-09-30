@@ -112,6 +112,8 @@ pub struct Analyzer {
     magnitudes: Vec<f32>,
     bands: Vec<Band>,
     bin_width: f32,
+    /// Upper edge of the highest band, in Hz.
+    max_frequency: f32,
     /// First band of the mid and treble ranges.
     mid_start: usize,
     treble_start: usize,
@@ -184,6 +186,7 @@ impl Analyzer {
             window,
             bands,
             bin_width,
+            max_frequency,
             previous: [0.0; BAND_COUNT],
             flux_mean: 0.0,
             flux_variance: 0.0,
@@ -239,15 +242,7 @@ impl Analyzer {
             *value = raw.max(*value * decay);
         }
 
-        let bands = &self.spectrum.bands;
-        let average = |range: std::ops::Range<usize>| {
-            let len = range.len().max(1) as f32;
-            bands[range].iter().sum::<f32>() / len
-        };
-        self.spectrum.bass = average(0..self.mid_start);
-        self.spectrum.mid = average(self.mid_start..self.treble_start);
-        self.spectrum.treble = average(self.treble_start..BAND_COUNT);
-
+        self.update_ranges();
         self.detect_beat(&current, dt);
         self.previous = current;
 
@@ -293,6 +288,47 @@ impl Analyzer {
 
     pub fn beat_threshold(&self) -> f32 {
         self.threshold
+    }
+
+    /// Lights the band of each note's frequency with the note's value (e.g.
+    /// MIDI velocities, 0..1, indexed by MIDI note number: 69 is A4, 440 Hz),
+    /// where it's louder than the sound. Call after [`Analyzer::process`].
+    pub fn add_notes(&mut self, notes: &[f32]) -> &Spectrum {
+        let mut changed = false;
+        for (note, &value) in notes.iter().enumerate() {
+            if value <= 0.0 {
+                continue;
+            }
+            let frequency = 440.0 * 2f32.powf((note as f32 - 69.0) / 12.0);
+            if let Some(band) = self.band_of(frequency) {
+                let current = &mut self.spectrum.bands[band];
+                changed |= value > *current;
+                *current = current.max(value);
+            }
+        }
+        if changed {
+            self.update_ranges();
+        }
+        &self.spectrum
+    }
+
+    /// The band containing a frequency, if it's within the analyzed range.
+    pub fn band_of(&self, frequency: f32) -> Option<usize> {
+        let position = (frequency / MIN_FREQUENCY).ln() / (self.max_frequency / MIN_FREQUENCY).ln();
+        (0.0..1.0)
+            .contains(&position)
+            .then(|| ((position * BAND_COUNT as f32) as usize).min(BAND_COUNT - 1))
+    }
+
+    fn update_ranges(&mut self) {
+        let bands = &self.spectrum.bands;
+        let average = |range: std::ops::Range<usize>| {
+            let len = range.len().max(1) as f32;
+            bands[range].iter().sum::<f32>() / len
+        };
+        self.spectrum.bass = average(0..self.mid_start);
+        self.spectrum.mid = average(self.mid_start..self.treble_start);
+        self.spectrum.treble = average(self.treble_start..BAND_COUNT);
     }
 
     /// Center frequency of a band, in Hz.
@@ -477,6 +513,45 @@ mod tests {
             .collect();
         // At most one, when the sound starts.
         assert!(count_beats(&signal, Settings::default()) <= 1);
+    }
+
+    #[test]
+    fn notes_light_their_band() {
+        let mut analyzer = Analyzer::new(SAMPLE_RATE, FFT_SIZE);
+        analyzer.process(&[0.0; FFT_SIZE], FRAME);
+        let mut notes = [0.0; 128];
+        notes[69] = 0.8; // A4, 440 Hz.
+        let spectrum = analyzer.add_notes(&notes).clone();
+        let band = analyzer.band_of(440.0).unwrap();
+        assert_eq!(spectrum.bands[band], 0.8);
+        assert_eq!(loudest_band(&spectrum), band);
+        assert!(spectrum.mid > 0.0 && spectrum.bass == 0.0 && spectrum.treble == 0.0);
+        // Out of the analyzed range: note 0 is about 8 Hz.
+        notes = [0.0; 128];
+        notes[0] = 1.0;
+        let mut analyzer = Analyzer::new(SAMPLE_RATE, FFT_SIZE);
+        analyzer.process(&[0.0; FFT_SIZE], FRAME);
+        assert!(analyzer.add_notes(&notes).bands.iter().all(|&v| v == 0.0));
+    }
+
+    #[test]
+    fn notes_never_lower_the_sound() {
+        let mut analyzer = Analyzer::new(SAMPLE_RATE, FFT_SIZE);
+        let loud = analyzer.process(&sine(440.0, 0.5), FRAME).clone();
+        let band = analyzer.band_of(440.0).unwrap();
+        let mut notes = [0.0; 128];
+        notes[69] = 0.1;
+        assert_eq!(analyzer.add_notes(&notes).bands[band], loud.bands[band]);
+    }
+
+    #[test]
+    fn band_of_matches_band_centers() {
+        let analyzer = Analyzer::new(SAMPLE_RATE, FFT_SIZE);
+        for band in 0..BAND_COUNT {
+            assert_eq!(analyzer.band_of(analyzer.band_center(band)), Some(band));
+        }
+        assert_eq!(analyzer.band_of(10.0), None);
+        assert_eq!(analyzer.band_of(20_000.0), None);
     }
 
     #[test]

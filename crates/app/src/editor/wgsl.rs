@@ -94,6 +94,8 @@ pub const INPUTS: &[Doc] = &[
     doc("band", "(i: u32) -> f32", "Loudness of band i, 0..1. Bands go from 0 (lows) to BAND_COUNT - 1 (highs)."),
     doc("band_at", "(t: f32) -> f32", "Loudness at t in 0..1 (lows to highs), interpolated between bands."),
     doc("hue", "(h: f32) -> vec3<f32>", "RGB color from a hue in 0..1 (red, green, blue, back to red)."),
+    doc("note", "(n: u32) -> f32", "MIDI note n (60 = middle C, 69 = A 440 Hz): its velocity, 0..1, while held, then fading out after release."),
+    doc("cc", "(n: u32) -> f32", "MIDI controller n (a knob or fader): its position, 0..1. Knob numbers depend on the device."),
     doc("BAND_COUNT", ": u32", "Number of frequency bands: 64."),
     doc("PI", ": f32", "3.14159..."),
 ];
