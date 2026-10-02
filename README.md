@@ -20,7 +20,10 @@ Live version: https://antaalt.github.io/ongakue/ (deployed from `main` by GitHub
 - **Edit shader** opens the current visual's WGSL code, with a picker at the top to
   switch visuals: it recompiles as you type, shows errors, and is saved in the
   browser. It suggests names as you type
-  (↑ ↓, Enter or Tab to accept) and explains the name under the mouse
+  (↑ ↓, Enter or Tab to accept) and explains the name under the mouse.
+  **New** creates a visual from a starter shader, **Import** opens a `.wgsl`
+  file as a new visual, **Export** downloads the current one, and **Delete**
+  removes the ones you added
 - **Tuning** opens sliders for the analysis settings and the shaders' free
   parameters (`u.params`), with a live plot of the beat detection. Each
   parameter's **MIDI** button links it to a knob: click it, then turn the knob

@@ -41,7 +41,12 @@
     <div id="editor" class="window">
       <div id="editor-header">
         <select id="editor-title"></select>
+        <button id="editor-new" title="Create a new visual">New</button>
+        <button id="editor-import" title="Open a .wgsl file as a new visual">Import</button>
+        <button id="editor-export" title="Download this visual's code as a .wgsl file">Export</button>
+        <button id="editor-delete" title="Delete this visual (only the ones you added)">Delete</button>
         <button id="editor-close" class="close" title="Close"></button>
+        <input type="file" id="editor-import-file" accept=".wgsl,.txt,text/plain" hidden />
       </div>
       <div id="editor-body">
         <pre id="editor-gutter" aria-hidden="true"></pre>

@@ -12,7 +12,7 @@ impl Editor {
         Ok(Self)
     }
 
-    pub fn set_visuals(&self, _names: &[&str]) {}
+    pub fn set_visuals(&self, _names: &[&str], _builtin_count: usize) {}
 
     pub fn show(&self, _visual: usize, _source: &str) {}
 
@@ -25,4 +25,10 @@ impl Editor {
     pub fn save_source(&self, _name: &str, _source: &str) {}
 
     pub fn forget_source(&self, _name: &str) {}
+
+    pub fn saved_visuals(&self) -> Vec<String> {
+        Vec::new()
+    }
+
+    pub fn save_visuals(&self, _names: &[&str]) {}
 }

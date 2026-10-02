@@ -18,6 +18,10 @@ const VISUALS: &[(&str, &str)] = &[
     ("bars", include_str!("shaders/bars.wgsl")),
 ];
 
+/// Starting point for new visuals. Also drawn by a new visual whose code
+/// doesn't compile yet, since it has no working version of its own.
+pub const TEMPLATE_SHADER: &str = include_str!("shaders/template.wgsl");
+
 /// Mirrors `Uniforms` in `common.wgsl`.
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -39,8 +43,10 @@ struct Uniforms {
 pub const MIDI_COUNT: usize = 128;
 
 struct Visual {
-    name: &'static str,
-    builtin: &'static str,
+    name: String,
+    /// The original source of a built-in visual; `None` for visuals added
+    /// with [`Renderer::add_visual`].
+    builtin: Option<&'static str>,
     /// The source as last edited. It may not compile, in which case
     /// `pipeline` still holds the last version that did.
     source: String,
@@ -203,8 +209,8 @@ impl Renderer {
         renderer.visuals = VISUALS
             .iter()
             .map(|&(name, builtin)| Visual {
-                name,
-                builtin,
+                name: name.to_owned(),
+                builtin: Some(builtin),
                 source: builtin.to_owned(),
                 pipeline: renderer.create_pipeline(name, builtin),
             })
@@ -268,8 +274,8 @@ impl Renderer {
         self.visual
     }
 
-    pub fn visual_name(&self, index: usize) -> &'static str {
-        self.visuals[index].name
+    pub fn visual_name(&self, index: usize) -> &str {
+        &self.visuals[index].name
     }
 
     /// The visual's source as last edited, which may not compile.
@@ -277,8 +283,43 @@ impl Renderer {
         &self.visuals[index].source
     }
 
-    pub fn builtin_source(&self, index: usize) -> &'static str {
+    /// The original source of a built-in visual, `None` for added ones.
+    pub fn builtin_source(&self, index: usize) -> Option<&'static str> {
         self.visuals[index].builtin
+    }
+
+    /// Adds a visual after the existing ones and returns its index. If the
+    /// source doesn't compile, the error is returned too, and the visual draws
+    /// the template until its source is fixed.
+    pub fn add_visual(&mut self, name: String, source: String) -> (usize, Result<(), ShaderError>) {
+        let result = validate_shader(&source);
+        let working = if result.is_ok() {
+            &source
+        } else {
+            TEMPLATE_SHADER
+        };
+        let pipeline = self.create_pipeline(&name, working);
+        self.visuals.push(Visual {
+            name,
+            builtin: None,
+            source,
+            pipeline,
+        });
+        (self.visuals.len() - 1, result)
+    }
+
+    /// Removes a visual added with [`Renderer::add_visual`]; built-in ones
+    /// stay. Returns whether it was removed. The displayed visual stays the
+    /// same, unless it's the one removed: then the next one is shown.
+    pub fn remove_visual(&mut self, index: usize) -> bool {
+        if self.visuals[index].builtin.is_some() {
+            return false;
+        }
+        self.visuals.remove(index);
+        if self.visual > index || self.visual == self.visuals.len() {
+            self.visual -= 1;
+        }
+        true
     }
 
     /// Values shaders read as `u.params`, e.g. from sliders.
@@ -297,7 +338,7 @@ impl Renderer {
     pub fn set_visual_source(&mut self, index: usize, source: String) -> Result<(), ShaderError> {
         let result = validate_shader(&source);
         if result.is_ok() {
-            self.visuals[index].pipeline = self.create_pipeline(self.visuals[index].name, &source);
+            self.visuals[index].pipeline = self.create_pipeline(&self.visuals[index].name, &source);
         }
         self.visuals[index].source = source;
         result
@@ -341,7 +382,7 @@ impl Renderer {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some(self.visuals[self.visual].name),
+                label: Some(&self.visuals[self.visual].name),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &view,
                     depth_slice: None,
@@ -372,7 +413,7 @@ mod tests {
 
     #[test]
     fn builtin_visuals_compile() {
-        for (name, source) in VISUALS {
+        for (name, source) in VISUALS.iter().chain([&("template", TEMPLATE_SHADER)]) {
             if let Err(error) = validate_shader(source) {
                 panic!("{name} does not compile:\n{error}");
             }

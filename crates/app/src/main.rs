@@ -21,6 +21,10 @@ enum UserEvent {
     RendererReady(Box<Renderer>),
     /// A visual was picked in the editor.
     VisualSelected(usize),
+    /// A visual was created or imported in the editor.
+    VisualAdded { name: String, source: String },
+    /// A visual added earlier was deleted.
+    VisualDeleted(usize),
     /// The shader of a visual was edited.
     ShaderEdited { visual: usize, source: String },
     /// Restore a visual's built-in shader.
@@ -42,6 +46,22 @@ struct App {
 }
 
 impl App {
+    /// Shows the visuals in the editor's picker, and saves the list of the
+    /// ones the user added (listed after the built-in ones).
+    fn update_visual_list(&self) {
+        let Some(renderer) = &self.renderer else {
+            return;
+        };
+        let names: Vec<_> = (0..renderer.visual_count())
+            .map(|visual| renderer.visual_name(visual))
+            .collect();
+        let builtin_count = (0..renderer.visual_count())
+            .filter(|&visual| renderer.builtin_source(visual).is_some())
+            .count();
+        self.editor.set_visuals(&names, builtin_count);
+        self.editor.save_visuals(&names[builtin_count..]);
+    }
+
     /// Loads the displayed visual's source into the editor.
     fn show_current_visual(&self) {
         let Some(renderer) = &self.renderer else {
@@ -92,17 +112,23 @@ impl ApplicationHandler<UserEvent> for App {
                     renderer.resize(size.width, size.height);
                     window.request_redraw();
                 }
-                // Restore the shaders edited in previous sessions.
+                // Restore the shaders edited in previous sessions, then the
+                // visuals added.
                 for visual in 0..renderer.visual_count() {
                     if let Some(source) = self.editor.saved_source(renderer.visual_name(visual)) {
                         let _ = renderer.set_visual_source(visual, source);
                     }
                 }
-                let names: Vec<_> = (0..renderer.visual_count())
-                    .map(|visual| renderer.visual_name(visual))
-                    .collect();
-                self.editor.set_visuals(&names);
+                for name in self.editor.saved_visuals() {
+                    let source = self
+                        .editor
+                        .saved_source(&name)
+                        .unwrap_or_else(|| render::TEMPLATE_SHADER.to_owned());
+                    // Errors show when the visual is opened in the editor.
+                    let _ = renderer.add_visual(name, source);
+                }
                 self.renderer = Some(*renderer);
+                self.update_visual_list();
                 self.show_current_visual();
             }
             UserEvent::VisualSelected(visual) => {
@@ -111,12 +137,33 @@ impl ApplicationHandler<UserEvent> for App {
                 }
                 self.show_current_visual();
             }
+            UserEvent::VisualAdded { name, source } => {
+                let Some(renderer) = &mut self.renderer else {
+                    return;
+                };
+                self.editor.save_source(&name, &source);
+                let (visual, _) = renderer.add_visual(name, source);
+                renderer.set_visual(visual);
+                self.update_visual_list();
+                self.show_current_visual();
+            }
+            UserEvent::VisualDeleted(visual) => {
+                let Some(renderer) = &mut self.renderer else {
+                    return;
+                };
+                let name = renderer.visual_name(visual).to_owned();
+                if renderer.remove_visual(visual) {
+                    self.editor.forget_source(&name);
+                    self.update_visual_list();
+                    self.show_current_visual();
+                }
+            }
             UserEvent::ShaderEdited { visual, source } => {
                 let Some(renderer) = &mut self.renderer else {
                     return;
                 };
                 let name = renderer.visual_name(visual);
-                if source == renderer.builtin_source(visual) {
+                if renderer.builtin_source(visual) == Some(source.as_str()) {
                     self.editor.forget_source(name);
                 } else {
                     self.editor.save_source(name, &source);
@@ -128,9 +175,11 @@ impl ApplicationHandler<UserEvent> for App {
                 let Some(renderer) = &mut self.renderer else {
                     return;
                 };
+                let Some(builtin) = renderer.builtin_source(visual) else {
+                    return;
+                };
                 self.editor.forget_source(renderer.visual_name(visual));
-                let builtin = renderer.builtin_source(visual).to_owned();
-                let _ = renderer.set_visual_source(visual, builtin);
+                let _ = renderer.set_visual_source(visual, builtin.to_owned());
                 self.show_current_visual();
             }
         }

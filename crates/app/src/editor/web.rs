@@ -18,9 +18,12 @@ use web_sys::{
 use winit::event_loop::EventLoopProxy;
 
 use super::highlight::{highlight, line_numbers};
+use super::names::{file_name, name_from_file, unique_name};
 use super::popups::{Popups, insert_text};
 use crate::UserEvent;
-use render::ShaderError;
+use render::{ShaderError, TEMPLATE_SHADER};
+use wasm_bindgen_futures::JsFuture;
+use web_sys::{Blob, BlobPropertyBag, HtmlAnchorElement, HtmlInputElement, Url};
 
 /// How long typing must pause before the shader is recompiled.
 const COMPILE_DELAY_MS: i32 = 150;
@@ -28,6 +31,9 @@ const COMPILE_DELAY_MS: i32 = 150;
 pub struct Editor {
     /// Picks the visual to display and edit.
     visuals: HtmlSelectElement,
+    /// Number of built-in visuals, listed first; the others can be deleted.
+    builtin_count: Rc<Cell<usize>>,
+    delete: HtmlButtonElement,
     code: HtmlTextAreaElement,
     /// Re-highlights the code after it changed.
     refresh: Rc<dyn Fn()>,
@@ -183,6 +189,93 @@ impl Editor {
         visuals.set_onchange(Some(on_change.as_ref().unchecked_ref()));
         on_change.forget();
 
+        let builtin_count = Rc::new(Cell::new(0));
+        let names = {
+            let visuals = visuals.clone();
+            move || -> Vec<String> {
+                let options = visuals.options();
+                (0..options.length())
+                    .filter_map(|i| options.item(i))
+                    .filter_map(|option| option.text_content())
+                    .collect()
+            }
+        };
+
+        on_click(&document, "editor-new", {
+            let (proxy, names) = (proxy.clone(), names.clone());
+            move || {
+                let window = web_sys::window().unwrap();
+                let Ok(Some(wanted)) =
+                    window.prompt_with_message_and_default("Name of the new visual:", "my visual")
+                else {
+                    return;
+                };
+                if let Some(name) = unique_name(&wanted, &names()) {
+                    let source = TEMPLATE_SHADER.to_owned();
+                    let _ = proxy.send_event(UserEvent::VisualAdded { name, source });
+                }
+            }
+        })?;
+
+        // Import: the button opens a hidden file input.
+        let import_input: HtmlInputElement = element(&document, "editor-import-file")?;
+        let on_import = {
+            let (proxy, names, input) = (proxy.clone(), names.clone(), import_input.clone());
+            Closure::<dyn FnMut()>::new(move || {
+                let Some(file) = input.files().and_then(|files| files.get(0)) else {
+                    return;
+                };
+                // Picking the same file again must fire `change` again.
+                input.set_value("");
+                let (proxy, names) = (proxy.clone(), names.clone());
+                wasm_bindgen_futures::spawn_local(async move {
+                    let Ok(text) = JsFuture::from(file.text()).await else {
+                        return;
+                    };
+                    let source = text.as_string().unwrap_or_default();
+                    if let Some(name) = unique_name(name_from_file(&file.name()), &names()) {
+                        let _ = proxy.send_event(UserEvent::VisualAdded { name, source });
+                    }
+                });
+            })
+        };
+        import_input.set_onchange(Some(on_import.as_ref().unchecked_ref()));
+        on_import.forget();
+        on_click(&document, "editor-import", move || import_input.click())?;
+
+        on_click(&document, "editor-export", {
+            let (code, visuals) = (code.clone(), visuals.clone());
+            move || {
+                let name = visuals
+                    .selected_options()
+                    .item(0)
+                    .and_then(|option| option.text_content())
+                    .unwrap_or_else(|| "shader".to_owned());
+                if let Err(error) = download(&file_name(&name), &code.value()) {
+                    log::error!("export failed: {error:?}");
+                }
+            }
+        })?;
+
+        on_click(&document, "editor-delete", {
+            let (proxy, visual, builtin_count) =
+                (proxy.clone(), visual.clone(), builtin_count.clone());
+            move || {
+                let index = visual.get();
+                let Some(name) = names().into_iter().nth(index) else {
+                    return;
+                };
+                let question = format!("Delete the visual \"{name}\"? This can't be undone.");
+                let confirmed = web_sys::window()
+                    .unwrap()
+                    .confirm_with_message(&question)
+                    .unwrap_or(false);
+                if index >= builtin_count.get() && confirmed {
+                    let _ = proxy.send_event(UserEvent::VisualDeleted(index));
+                }
+            }
+        })?;
+
         on_click(&document, "edit", {
             let panel = panel.clone();
             move || {
@@ -203,6 +296,8 @@ impl Editor {
 
         Ok(Self {
             visuals,
+            builtin_count,
+            delete: element(&document, "editor-delete")?,
             error: element(&document, "editor-error")?,
             error_line: element(&document, "editor-error-line")?,
             error_at,
@@ -215,8 +310,10 @@ impl Editor {
         })
     }
 
-    /// Fills the visual picker, in the renderer's order.
-    pub fn set_visuals(&self, names: &[&str]) {
+    /// Fills the visual picker, in the renderer's order. The first
+    /// `builtin_count` are built in, and can't be deleted.
+    pub fn set_visuals(&self, names: &[&str], builtin_count: usize) {
+        self.builtin_count.set(builtin_count);
         self.visuals.set_length(0);
         for name in names {
             if let Ok(option) = HtmlOptionElement::new_with_text(name) {
@@ -235,6 +332,7 @@ impl Editor {
         self.popups.hide_tooltip();
         self.visual.set(visual);
         self.visuals.set_selected_index(visual as i32);
+        self.delete.set_disabled(visual < self.builtin_count.get());
         self.code.set_value(source);
         (self.refresh)();
     }
@@ -272,6 +370,45 @@ impl Editor {
             let _ = storage.remove_item(&storage_key(name));
         }
     }
+
+    /// Names of the visuals the user added, in order.
+    pub fn saved_visuals(&self) -> Vec<String> {
+        let list = self
+            .storage
+            .as_ref()
+            .and_then(|storage| storage.get_item(VISUALS_KEY).ok().flatten())
+            .unwrap_or_default();
+        list.lines().map(str::to_owned).collect()
+    }
+
+    pub fn save_visuals(&self, names: &[&str]) {
+        if let Some(storage) = &self.storage {
+            let _ = storage.set_item(VISUALS_KEY, &names.join("\n"));
+        }
+    }
+}
+
+/// Storage key of the list of visuals the user added; their sources are
+/// stored like edits, under [`storage_key`].
+const VISUALS_KEY: &str = "ongakue.visuals";
+
+/// Makes the browser download `text` as a file.
+fn download(file_name: &str, text: &str) -> Result<(), JsValue> {
+    let options = BlobPropertyBag::new();
+    options.set_type("text/plain");
+    let parts = js_sys::Array::of1(&JsValue::from_str(text));
+    let blob = Blob::new_with_str_sequence_and_options(&parts, &options)?;
+    let url = Url::create_object_url_with_blob(&blob)?;
+
+    let window = web_sys::window().unwrap();
+    let link: HtmlAnchorElement = window.document().unwrap().create_element("a")?.dyn_into()?;
+    link.set_href(&url);
+    link.set_download(file_name);
+    link.click();
+    // Free the file's memory once the download has started.
+    let revoke = Closure::once_into_js(move || Url::revoke_object_url(&url));
+    window.set_timeout_with_callback_and_timeout_and_arguments_0(revoke.unchecked_ref(), 10_000)?;
+    Ok(())
 }
 
 fn storage_key(name: &str) -> String {

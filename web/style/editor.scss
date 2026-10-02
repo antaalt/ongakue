@@ -16,6 +16,12 @@
 
 #editor-title {
     flex: 1;
+    min-width: 0;
+}
+
+#editor-header button:not(.close) {
+    padding: 2px 10px;
+    font-size: 14px;
 }
 
 /* The textarea (transparent text) sits exactly over the highlighted copy:

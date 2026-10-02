@@ -26,6 +26,7 @@ web-sys = { version = "0.3", features = [
     "AudioNode",
     "AudioScheduledSourceNode",
     "Blob",
+    "BlobPropertyBag",
     "CanvasRenderingContext2d",
     "CssStyleDeclaration",
     "Document",
@@ -34,7 +35,10 @@ web-sys = { version = "0.3", features = [
     "FileList",
     "Element",
     "Event",
+    "HtmlAnchorElement",
     "HtmlButtonElement",
+    "HtmlCollection",
+    "HtmlOptionsCollection",
     "HtmlCanvasElement",
     "HtmlDocument",
     "HtmlElement",
@@ -59,6 +63,7 @@ web-sys = { version = "0.3", features = [
     "Node",
     "Storage",
     "TextMetrics",
+    "Url",
     "Window",
 ] }
 
