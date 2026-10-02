@@ -16,6 +16,8 @@ const COMMON_SHADER: &str = include_str!("shaders/common.wgsl");
 const VISUALS: &[(&str, &str)] = &[
     ("radial", include_str!("shaders/radial.wgsl")),
     ("bars", include_str!("shaders/bars.wgsl")),
+    // Shows the value of every input, to check what shaders receive.
+    ("debug", include_str!("shaders/debug.wgsl")),
 ];
 
 /// Starting point for new visuals. Also drawn by a new visual whose code
