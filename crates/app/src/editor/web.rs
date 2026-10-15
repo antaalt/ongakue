@@ -123,7 +123,8 @@ impl Editor {
         code.set_onmouseleave(Some(on_mouseleave.as_ref().unchecked_ref()));
         on_mouseleave.forget();
 
-        let send = {
+        // Saves and recompiles the code in the editor.
+        let send_later = {
             let (proxy, code, visual) = (proxy.clone(), code.clone(), visual.clone());
             Closure::<dyn FnMut()>::new(move || {
                 let _ = proxy.send_event(UserEvent::ShaderEdited {
@@ -140,7 +141,7 @@ impl Editor {
                     window.clear_timeout_with_handle(timer);
                 }
                 let timer = window.set_timeout_with_callback_and_timeout_and_arguments_0(
-                    send.as_ref().unchecked_ref(),
+                    send_later.as_ref().unchecked_ref(),
                     COMPILE_DELAY_MS,
                 );
                 pending.set(timer.ok());
@@ -245,9 +246,10 @@ impl Editor {
         on_import.forget();
         on_click(&document, "editor-import", move || import_input.click())?;
 
-        on_click(&document, "editor-export", {
+        // Downloads the code as `<name>.wgsl` or `.glsl`.
+        let export: Rc<dyn Fn()> = {
             let (code, visuals) = (code.clone(), visuals.clone());
-            move || {
+            Rc::new(move || {
                 let name = visuals
                     .selected_options()
                     .item(0)
@@ -261,7 +263,11 @@ impl Editor {
                 if let Err(error) = download(&file_name(&name, extension), &source) {
                     log::error!("export failed: {error:?}");
                 }
-            }
+            })
+        };
+        on_click(&document, "editor-export", {
+            let export = export.clone();
+            move || export()
         })?;
 
         on_click(&document, "editor-delete", {
@@ -282,6 +288,20 @@ impl Editor {
                 }
             }
         })?;
+
+        // Ctrl+S (Cmd+S on a Mac) anywhere in the editor: download the code,
+        // like Export, instead of the browser's "Save page as".
+        let on_save = Closure::<dyn FnMut(KeyboardEvent)>::new(move |event: KeyboardEvent| {
+            let save_key = (event.ctrl_key() || event.meta_key())
+                && !event.alt_key()
+                && event.key().eq_ignore_ascii_case("s");
+            if save_key {
+                event.prevent_default();
+                export();
+            }
+        });
+        panel.add_event_listener_with_callback("keydown", on_save.as_ref().unchecked_ref())?;
+        on_save.forget();
 
         on_click(&document, "edit", {
             let panel = panel.clone();
