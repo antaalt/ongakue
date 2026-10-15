@@ -16,4 +16,9 @@ impl Midi {
     pub fn frame(&mut self, dt: f32) -> MidiFrame {
         self.state.frame(dt)
     }
+
+    /// Feeds a MIDI message from another input, like the keyboard piano.
+    pub fn handle(&mut self, message: &[u8]) {
+        self.state.handle(message);
+    }
 }

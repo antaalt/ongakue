@@ -1,6 +1,7 @@
 mod audio;
 mod editor;
 mod midi;
+mod piano;
 mod tuning;
 
 use std::sync::Arc;
@@ -39,6 +40,7 @@ struct App {
     editor: editor::Editor,
     tuning: tuning::Tuning,
     midi: midi::Midi,
+    piano: piano::Piano,
     samples: Box<[f32; audio::SAMPLE_COUNT]>,
     analyzer: Analyzer,
     start: Instant,
@@ -186,6 +188,9 @@ impl ApplicationHandler<UserEvent> for App {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+        for message in self.piano.window_event(&event) {
+            self.midi.handle(&message);
+        }
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => {
@@ -246,11 +251,24 @@ fn main() {
         editor::Editor::new(event_loop.create_proxy()).expect("failed to initialize editor");
     let tuning = tuning::Tuning::new().expect("failed to initialize the tuning panel");
     let midi = midi::Midi::new().expect("failed to initialize MIDI");
+    // The keyboard piano's notes go to MIDI and, on the web, to the synth.
+    #[cfg(target_arch = "wasm32")]
+    let piano = {
+        let (sink, synth) = (midi.sink(), audio.synth());
+        piano::Piano::new(move |message| {
+            sink.handle(message);
+            synth.handle(message);
+        })
+        .expect("failed to initialize the keyboard piano")
+    };
+    #[cfg(not(target_arch = "wasm32"))]
+    let piano = piano::Piano::new();
     let app = App {
         proxy: event_loop.create_proxy(),
         editor,
         tuning,
         midi,
+        piano,
         window: None,
         renderer: None,
         analyzer: Analyzer::new(audio.sample_rate(), audio::SAMPLE_COUNT),

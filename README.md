@@ -17,6 +17,10 @@ Live version: https://antaalt.github.io/ongakue/ (deployed from `main` by GitHub
 - **MIDI** connects MIDI keyboards and controllers (Chrome, Edge, Firefox): held
   notes light their frequency in the spectrum, and shaders read them with
   `note(n)` and knobs with `cc(n)`
+- The computer keyboard is a piano, with sound: the middle letter row plays
+  white keys from middle C (Q S D F G H J K L M on AZERTY, A S D F… on QWERTY),
+  the row above the black keys, and W / X (Z / X on QWERTY) change octave.
+  Keys typed in a text field, like the shader editor, play nothing
 - **Edit shader** opens the current visual's WGSL code, with a picker at the top to
   switch visuals: it recompiles as you type, shows errors, and is saved in the
   browser. It suggests names as you type

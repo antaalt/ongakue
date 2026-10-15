@@ -41,6 +41,24 @@ impl Midi {
     pub fn frame(&mut self, dt: f32) -> MidiFrame {
         self.state.borrow_mut().frame(dt)
     }
+
+    /// A handle to feed MIDI messages from other inputs, like the
+    /// computer-keyboard piano.
+    pub fn sink(&self) -> MidiSink {
+        MidiSink(self.state.clone())
+    }
+
+    pub fn handle(&mut self, message: &[u8]) {
+        self.state.borrow_mut().handle(message);
+    }
+}
+
+pub struct MidiSink(Rc<RefCell<MidiState>>);
+
+impl MidiSink {
+    pub fn handle(&self, message: &[u8]) {
+        self.0.borrow_mut().handle(message);
+    }
 }
 
 async fn connect(state: Rc<RefCell<MidiState>>, button: HtmlButtonElement) {

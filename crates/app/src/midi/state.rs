@@ -40,8 +40,6 @@ impl Default for MidiState {
 impl MidiState {
     /// Applies one MIDI message (status byte, then data bytes). Messages from
     /// every channel are merged; the ones the app doesn't use are ignored.
-    // No MIDI input natively yet.
-    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     pub fn handle(&mut self, message: &[u8]) {
         let &[status, first, second, ..] = message else {
             return;

@@ -1,9 +1,14 @@
-//! Browser audio through the Web Audio API, from a file or the microphone.
+//! Browser audio through the Web Audio API, from a file or the microphone,
+//! plus a small synthesizer for the computer-keyboard piano.
 //!
 //! Graph:
 //! - file: AudioBufferSourceNode -> AnalyserNode, and -> speakers
 //! - microphone: MediaStreamAudioSourceNode -> AnalyserNode only (playing it
 //!   back would cause feedback)
+//! - synth: one voice per note -> AnalyserNode, and -> speakers
+//!
+//! Pausing a file stops its source and remembers the position, rather than
+//! suspending the whole audio context, so the synth keeps playing.
 //!
 //! The analyser taps what is actually being played or heard, so the visuals
 //! stay in sync with the sound.
@@ -17,10 +22,10 @@ use std::rc::Rc;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{
-    AnalyserNode, AudioBuffer, AudioBufferSourceNode, AudioContext, AudioContextState,
-    AudioScheduledSourceNode, Document, HtmlButtonElement, HtmlElement, HtmlInputElement,
+    AnalyserNode, AudioBuffer, AudioBufferSourceNode, AudioContext, AudioScheduledSourceNode,
+    BiquadFilterType, Document, GainNode, HtmlButtonElement, HtmlElement, HtmlInputElement,
     HtmlSelectElement, MediaStream, MediaStreamAudioSourceNode, MediaStreamConstraints,
-    MediaStreamTrack,
+    MediaStreamTrack, OscillatorNode, OscillatorType,
 };
 
 /// Number of samples returned by [`Backend::latest_samples`].
@@ -29,6 +34,7 @@ pub const SAMPLE_COUNT: usize = 2048;
 pub struct Backend {
     analyser: AnalyserNode,
     sample_rate: f32,
+    synth: Rc<Synth>,
 }
 
 struct Microphone {
@@ -42,9 +48,13 @@ struct State {
     buffer: Option<AudioBuffer>,
     /// Name of the decoded file, to show again when switching back to it.
     file_name: Option<String>,
-    /// The node currently playing (or paused), if any. A source node can only
-    /// be started once, so a new one is created each time playback restarts.
+    /// The node currently playing, if any. A source node can only be started
+    /// once, so a new one is created each time playback starts or resumes.
     source: Option<AudioBufferSourceNode>,
+    /// Where playback resumes in the file, in seconds.
+    position: f64,
+    /// Audio context time when the current source started playing.
+    started_at: f64,
     microphone: Option<Microphone>,
     play_button: HtmlButtonElement,
     file_controls: HtmlElement,
@@ -66,6 +76,8 @@ impl Backend {
             buffer: None,
             file_name: None,
             source: None,
+            position: 0.0,
+            started_at: 0.0,
             microphone: None,
             play_button: element(&document, "play")?,
             file_controls: element(&document, "file-controls")?,
@@ -120,10 +132,17 @@ impl Backend {
         on_source.forget();
 
         let sample_rate = state.borrow().ctx.sample_rate();
+        let synth = Rc::new(Synth::new(&state.borrow().ctx, &analyser)?);
         Ok(Self {
             analyser,
             sample_rate,
+            synth,
         })
+    }
+
+    /// The synthesizer playing the computer-keyboard piano's notes.
+    pub fn synth(&self) -> Rc<Synth> {
+        self.synth.clone()
     }
 
     pub fn sample_rate(&self) -> f32 {
@@ -140,6 +159,7 @@ async fn load_file(state: Rc<RefCell<State>>, file: web_sys::File) {
     let ctx = {
         let mut s = state.borrow_mut();
         s.stop_source();
+        s.position = 0.0;
         s.buffer = None;
         s.file_name = None;
         s.play_button.set_disabled(true);
@@ -176,42 +196,43 @@ fn toggle_playback(state: &Rc<RefCell<State>>) -> Result<(), JsValue> {
     let Some(buffer) = s.buffer.clone() else {
         return Ok(());
     };
-
-    if s.source.is_none() {
-        let source = s.ctx.create_buffer_source()?;
-        source.set_buffer(Some(&buffer));
-        source.connect_with_audio_node(&s.analyser)?;
-        source.connect_with_audio_node(&s.ctx.destination())?;
-
-        let on_ended = {
-            let state = state.clone();
-            Closure::once_into_js(move || {
-                let mut s = state.borrow_mut();
-                s.source = None;
-                s.play_button.set_text_content(Some("Play"));
-            })
-        };
-        let scheduled: &AudioScheduledSourceNode = &source;
-        scheduled.set_onended(Some(on_ended.unchecked_ref()));
-        scheduled.start()?;
-        s.source = Some(source);
-        let _ = s.ctx.resume()?;
-        s.play_button.set_text_content(Some("Pause"));
-    } else if s.ctx.state() == AudioContextState::Running {
-        let _ = s.ctx.suspend()?;
-        s.play_button.set_text_content(Some("Play"));
-    } else {
-        let _ = s.ctx.resume()?;
-        s.play_button.set_text_content(Some("Pause"));
+    if s.source.is_some() {
+        s.pause();
+        return Ok(());
     }
+
+    let source = s.ctx.create_buffer_source()?;
+    source.set_buffer(Some(&buffer));
+    source.connect_with_audio_node(&s.analyser)?;
+    source.connect_with_audio_node(&s.ctx.destination())?;
+
+    let on_ended = {
+        let state = state.clone();
+        Closure::once_into_js(move || {
+            // Played to the end: the next play starts over.
+            let mut s = state.borrow_mut();
+            s.source = None;
+            s.position = 0.0;
+            s.play_button.set_text_content(Some("Play"));
+        })
+    };
+    let scheduled: &AudioScheduledSourceNode = &source;
+    scheduled.set_onended(Some(on_ended.unchecked_ref()));
+    if s.position >= buffer.duration() {
+        s.position = 0.0;
+    }
+    source.start_with_when_and_grain_offset(0.0, s.position)?;
+    s.started_at = s.ctx.current_time();
+    s.source = Some(source);
+    let _ = s.ctx.resume()?;
+    s.play_button.set_text_content(Some("Pause"));
     Ok(())
 }
 
 async fn use_microphone(state: Rc<RefCell<State>>) {
     let ctx = {
         let mut s = state.borrow_mut();
-        s.stop_source();
-        s.play_button.set_text_content(Some("Play"));
+        s.pause();
         s.file_controls.set_hidden(true);
         s.status
             .set_text_content(Some("Waiting for the microphone…"));
@@ -275,6 +296,15 @@ fn stop_tracks(stream: &MediaStream) {
 }
 
 impl State {
+    /// Stops the file, remembering where, to resume from there.
+    fn pause(&mut self) {
+        if self.source.is_some() {
+            self.position += self.ctx.current_time() - self.started_at;
+            self.stop_source();
+        }
+        self.play_button.set_text_content(Some("Play"));
+    }
+
     fn stop_source(&mut self) {
         if let Some(source) = self.source.take() {
             let scheduled: &AudioScheduledSourceNode = &source;
@@ -293,6 +323,91 @@ impl State {
         self.file_controls.set_hidden(false);
         let status = self.file_name.as_deref().unwrap_or("Choose an audio file");
         self.status.set_text_content(Some(status));
+    }
+}
+
+/// A small synthesizer: a filtered sawtooth per note, with a short fade in
+/// and out so notes don't click. Its sound goes to the speakers and to the
+/// analyser, like a file's.
+pub struct Synth {
+    ctx: AudioContext,
+    output: GainNode,
+    /// The notes playing, with their oscillator and volume.
+    voices: RefCell<Vec<(u8, OscillatorNode, GainNode)>>,
+}
+
+impl Synth {
+    fn new(ctx: &AudioContext, analyser: &AnalyserNode) -> Result<Self, JsValue> {
+        let output = ctx.create_gain()?;
+        // Leaves room for chords without clipping.
+        output.gain().set_value(0.25);
+        output.connect_with_audio_node(analyser)?;
+        output.connect_with_audio_node(&ctx.destination())?;
+        Ok(Self {
+            ctx: ctx.clone(),
+            output,
+            voices: RefCell::new(Vec::new()),
+        })
+    }
+
+    /// Plays a MIDI note-on or note-off message; ignores the others.
+    pub fn handle(&self, message: &[u8]) {
+        let &[status, note, velocity, ..] = message else {
+            return;
+        };
+        let result = match status & 0xF0 {
+            0x90 if velocity > 0 => self.note_on(note, f32::from(velocity) / 127.0),
+            0x80 | 0x90 => self.note_off(note),
+            _ => Ok(()),
+        };
+        if let Err(error) = result {
+            log::warn!("synth error: {error:?}");
+        }
+    }
+
+    fn note_on(&self, note: u8, velocity: f32) -> Result<(), JsValue> {
+        self.note_off(note)?;
+        // A key press counts as a user gesture: the context may start.
+        let _ = self.ctx.resume();
+        let now = self.ctx.current_time();
+
+        let oscillator = self.ctx.create_oscillator()?;
+        oscillator.set_type(OscillatorType::Sawtooth);
+        oscillator
+            .frequency()
+            .set_value(440.0 * 2f32.powf((f32::from(note) - 69.0) / 12.0));
+        let filter = self.ctx.create_biquad_filter()?;
+        filter.set_type(BiquadFilterType::Lowpass);
+        filter.frequency().set_value(3000.0);
+        let gain = self.ctx.create_gain()?;
+        let volume = gain.gain();
+        volume.set_value_at_time(0.0, now)?;
+        volume.linear_ramp_to_value_at_time(velocity, now + 0.005)?;
+        // Then settles a little lower while held.
+        volume.set_target_at_time(velocity * 0.6, now + 0.005, 0.3)?;
+
+        oscillator.connect_with_audio_node(&filter)?;
+        filter.connect_with_audio_node(&gain)?;
+        gain.connect_with_audio_node(&self.output)?;
+        let scheduled: &AudioScheduledSourceNode = &oscillator;
+        scheduled.start()?;
+        self.voices.borrow_mut().push((note, oscillator, gain));
+        Ok(())
+    }
+
+    fn note_off(&self, note: u8) -> Result<(), JsValue> {
+        let now = self.ctx.current_time();
+        let mut voices = self.voices.borrow_mut();
+        let (released, playing): (Vec<_>, Vec<_>) =
+            voices.drain(..).partition(|(voice, _, _)| *voice == note);
+        *voices = playing;
+        for (_, oscillator, gain) in released {
+            // Fades out in about a quarter of a second.
+            gain.gain().set_target_at_time(0.0, now, 0.06)?;
+            let scheduled: &AudioScheduledSourceNode = &oscillator;
+            scheduled.stop_with_when(now + 0.4)?;
+        }
+        Ok(())
     }
 }
 
