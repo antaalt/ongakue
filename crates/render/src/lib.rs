@@ -101,9 +101,30 @@ pub enum ShaderLanguage {
     Glsl,
 }
 
-/// Tells the language of a visual's code: GLSL visuals define `mainImage`.
+/// Tells the language of a visual's code: GLSL visuals define
+/// `void mainImage(…)`. Comments don't count, so mentioning `mainImage` in
+/// one doesn't make WGSL code GLSL.
 pub fn shader_language(source: &str) -> ShaderLanguage {
-    if source.contains("mainImage") && !source.contains("@fragment") {
+    let mut code = String::with_capacity(source.len());
+    let mut rest = source;
+    while !rest.is_empty() {
+        if let Some(after) = rest.strip_prefix("//") {
+            rest = after.find('\n').map_or("", |end| &after[end..]);
+        } else if let Some(after) = rest.strip_prefix("/*") {
+            rest = after.find("*/").map_or("", |end| &after[end + 2..]);
+            code.push(' ');
+        } else {
+            let c = rest.chars().next().unwrap();
+            code.push(c);
+            rest = &rest[c.len_utf8()..];
+        }
+    }
+    // Any spacing between `void` and the name.
+    let words: Vec<&str> = code.split_whitespace().collect();
+    let defines_main_image = words
+        .windows(2)
+        .any(|pair| pair[0] == "void" && pair[1].starts_with("mainImage"));
+    if defines_main_image {
         ShaderLanguage::Glsl
     } else {
         ShaderLanguage::Wgsl
@@ -589,12 +610,19 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
     }
 
     #[test]
-    fn glsl_without_main_image_says_so() {
-        // Detected as GLSL by the comment, but mainImage isn't defined.
-        let source = "// mainImage is missing\nvoid other() {}\n";
-        let error = validate_shader(source).unwrap_err();
-        assert!(error.message.contains("mainImage"), "{error}");
-        assert_eq!(error.line, None);
+    fn detection_needs_a_main_image_definition() {
+        // Mentioned in comments only: still WGSL.
+        let commented =
+            "// Shadertoy's mainImage\n/* void mainImage */\n@fragment\nfn fs_main() {}";
+        assert_eq!(shader_language(commented), ShaderLanguage::Wgsl);
+        // Any spacing, and the definition on the next line, still count.
+        let glsl = "void\n  mainImage (out vec4 fragColor, in vec2 fragCoord) {}";
+        assert_eq!(shader_language(glsl), ShaderLanguage::Glsl);
+        // Called but not defined: not GLSL.
+        assert_eq!(
+            shader_language("x = mainImage(c, p);"),
+            ShaderLanguage::Wgsl
+        );
     }
 
     #[test]

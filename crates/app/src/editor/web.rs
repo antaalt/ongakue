@@ -69,6 +69,7 @@ impl Editor {
             element(&document, "editor-hover")?,
         );
 
+        let language: HtmlElement = element(&document, "editor-language")?;
         let refresh: Rc<dyn Fn()> = {
             let (code, gutter, error_at) = (code.clone(), gutter.clone(), error_at.clone());
             Rc::new(move || {
@@ -77,6 +78,7 @@ impl Editor {
                 // the textarea.
                 highlighted.set_inner_html(&(highlight(&source) + "\n\n\n"));
                 gutter.set_inner_html(&(line_numbers(&source, error_at.get()) + "\n\n\n"));
+                show_language(&language, render::shader_language(&source));
             })
         };
 
@@ -414,6 +416,23 @@ fn download(file_name: &str, text: &str) -> Result<(), JsValue> {
     let revoke = Closure::once_into_js(move || Url::revoke_object_url(&url));
     window.set_timeout_with_callback_and_timeout_and_arguments_0(revoke.unchecked_ref(), 10_000)?;
     Ok(())
+}
+
+/// Shows the language the code is read as, and why.
+fn show_language(badge: &HtmlElement, language: render::ShaderLanguage) {
+    let (name, why) = match language {
+        render::ShaderLanguage::Wgsl => (
+            "WGSL",
+            "Read as WGSL: the code defines fn fs_main. Code defining mainImage is read as GLSL.",
+        ),
+        render::ShaderLanguage::Glsl => (
+            "GLSL",
+            "Read as GLSL, Shadertoy style: the code defines mainImage. Otherwise it's read as WGSL.",
+        ),
+    };
+    badge.set_text_content(Some(name));
+    badge.set_title(why);
+    badge.set_class_name(&name.to_lowercase());
 }
 
 fn storage_key(name: &str) -> String {
