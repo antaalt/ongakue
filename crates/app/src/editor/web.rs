@@ -251,7 +251,12 @@ impl Editor {
                     .item(0)
                     .and_then(|option| option.text_content())
                     .unwrap_or_else(|| "shader".to_owned());
-                if let Err(error) = download(&file_name(&name), &code.value()) {
+                let source = code.value();
+                let extension = match render::shader_language(&source) {
+                    render::ShaderLanguage::Wgsl => "wgsl",
+                    render::ShaderLanguage::Glsl => "glsl",
+                };
+                if let Err(error) = download(&file_name(&name, extension), &source) {
                     log::error!("export failed: {error:?}");
                 }
             }

@@ -34,9 +34,9 @@ pub fn name_from_file(file_name: &str) -> &str {
         .map_or(file_name, |(stem, _)| stem)
 }
 
-/// A file name for exporting a visual: `<name>.wgsl`, without characters
-/// that file systems refuse.
-pub fn file_name(name: &str) -> String {
+/// A file name for exporting a visual: `<name>.<extension>`, without
+/// characters that file systems refuse.
+pub fn file_name(name: &str, extension: &str) -> String {
     let safe: String = name
         .chars()
         .map(|c| {
@@ -47,7 +47,7 @@ pub fn file_name(name: &str) -> String {
             }
         })
         .collect();
-    format!("{safe}.wgsl")
+    format!("{safe}.{extension}")
 }
 
 #[cfg(test)]
@@ -81,6 +81,7 @@ mod tests {
         assert_eq!(name_from_file("glow.wgsl"), "glow");
         assert_eq!(name_from_file("my.glow.wgsl"), "my.glow");
         assert_eq!(name_from_file("glow"), "glow");
-        assert_eq!(file_name("a/b: c?"), "a_b_ c_.wgsl");
+        assert_eq!(file_name("a/b: c?", "wgsl"), "a_b_ c_.wgsl");
+        assert_eq!(name_from_file("tunnel.frag"), "tunnel");
     }
 }

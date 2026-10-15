@@ -4,9 +4,10 @@
 //! It's a keyword-based tokenizer, not a parser: good enough to color code
 //! as you type, and fast enough to run on every keystroke.
 
-use super::wgsl::{BUILTINS, INPUTS, KEYWORDS, TYPES};
+use super::wgsl::{BUILTINS, Language, language};
 
 pub fn highlight(source: &str) -> String {
+    let words = language(source);
     let mut html = String::with_capacity(source.len() * 2);
     let mut rest = source;
     while let Some(c) = rest.chars().next() {
@@ -19,7 +20,8 @@ pub fn highlight(source: &str) -> String {
             || (c == '.' && rest[1..].starts_with(|c: char| c.is_ascii_digit()))
         {
             (number_len(rest), Some("n"))
-        } else if c == '@' {
+        } else if c == '@' || c == '#' {
+            // WGSL attributes, GLSL preprocessor directives (`#define`).
             (1 + identifier_len(&rest[1..]), Some("a"))
         } else if c.is_alphabetic() || c == '_' {
             let len = identifier_len(rest);
@@ -28,7 +30,7 @@ pub fn highlight(source: &str) -> String {
             if word == "u" && rest[len..].starts_with('.') {
                 (len + 1 + identifier_len(&rest[len + 1..]), Some("i"))
             } else {
-                (len, classify(word))
+                (len, classify(word, words))
             }
         } else {
             (c.len_utf8(), None)
@@ -39,14 +41,14 @@ pub fn highlight(source: &str) -> String {
     html
 }
 
-fn classify(word: &str) -> Option<&'static str> {
-    if KEYWORDS.contains(&word) {
+fn classify(word: &str, words: &Language) -> Option<&'static str> {
+    if words.keywords.contains(&word) {
         Some("k")
-    } else if TYPES.contains(&word) {
+    } else if words.types.contains(&word) {
         Some("t")
     } else if BUILTINS.iter().any(|doc| doc.name == word) {
         Some("f")
-    } else if INPUTS.iter().any(|doc| doc.name == word) {
+    } else if words.inputs.iter().any(|doc| doc.name == word) {
         Some("i")
     } else {
         None
@@ -172,6 +174,17 @@ mod tests {
         assert_eq!(
             highlight("@fragment u.time band(i)"),
             r#"<span class="a">@fragment</span> <span class="i">u.time</span> <span class="i">band</span>(i)"#
+        );
+    }
+
+    #[test]
+    fn glsl_words() {
+        assert_eq!(
+            highlight("#define N 3\nvoid mainImage(out vec4 c) { float t = iTime; }"),
+            "<span class=\"a\">#define</span> N <span class=\"n\">3</span>\n\
+             <span class=\"k\">void</span> <span class=\"i\">mainImage</span>(\
+             <span class=\"k\">out</span> <span class=\"t\">vec4</span> c) { \
+             <span class=\"t\">float</span> t = <span class=\"i\">iTime</span>; }"
         );
     }
 

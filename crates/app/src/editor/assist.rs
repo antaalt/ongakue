@@ -4,15 +4,12 @@
 //! Offsets are byte offsets into the source. Positions are (line, column)
 //! as displayed: lines from 0, and columns counting a tab as up to 4 spaces.
 
-use super::wgsl::{self, BUILTINS, Doc, FIELDS, INPUTS, KEYWORDS, TYPES};
+use super::wgsl::{self, BUILTINS, Doc, FIELDS, Language, language};
 
 /// Most suggestions shown at once.
 const MAX_SUGGESTIONS: usize = 12;
 /// Must match `tab-size` in the editor's CSS.
 const TAB_SIZE: usize = 4;
-
-/// Keywords that declare a name, followed by that name.
-const DECLARATIONS: &[&str] = &["let", "var", "const", "fn", "struct", "alias", "override"];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Kind {
@@ -87,19 +84,20 @@ pub fn complete(source: &str, cursor: usize) -> Option<Completion> {
         // A field of something we know nothing about, or no word yet.
         return None;
     } else {
-        let locals = declarations(source)
+        let words = language(source);
+        let locals = declarations(source, words)
             .into_iter()
             .filter(|declaration| declaration.name != prefix)
             .map(|declaration| declaration.suggestion());
-        let inputs = INPUTS.iter().map(|doc| documented(doc, Kind::Input));
+        let inputs = words.inputs.iter().map(|doc| documented(doc, Kind::Input));
         let functions = BUILTINS.iter().map(|doc| documented(doc, Kind::Function));
-        let types = TYPES.iter().map(|&name| Suggestion {
+        let types = words.types.iter().map(|&name| Suggestion {
             label: name.to_owned(),
             kind: Kind::Type,
             detail: "type".to_owned(),
             doc: wgsl::type_doc(name).unwrap_or_default(),
         });
-        let keywords = KEYWORDS.iter().map(|&name| Suggestion {
+        let keywords = words.keywords.iter().map(|&name| Suggestion {
             label: name.to_owned(),
             kind: Kind::Keyword,
             detail: "keyword".to_owned(),
@@ -176,13 +174,14 @@ pub fn hover(source: &str, offset: usize) -> Option<Hover> {
         let (signature, doc) = find(FIELDS)?;
         return hover(format!("u.{word}{signature}"), doc.to_owned());
     }
-    if let Some((signature, doc)) = find(INPUTS).or_else(|| find(BUILTINS)) {
+    let words = language(source);
+    if let Some((signature, doc)) = find(words.inputs).or_else(|| find(BUILTINS)) {
         return hover(format!("{word}{signature}"), doc.to_owned());
     }
     if let Some(doc) = wgsl::type_doc(word) {
         return hover(word.to_owned(), doc);
     }
-    let declaration = declarations(source)
+    let declaration = declarations(source, words)
         .into_iter()
         .find(|declaration| declaration.name == word)?;
     hover(
@@ -300,28 +299,42 @@ impl Declaration<'_> {
     }
 }
 
-/// Names declared in the code (`let x`, `fn f`…), first declaration first.
-fn declarations(source: &str) -> Vec<Declaration<'_>> {
+/// Names declared in the code (`let x`, `fn f`, `float x`…), first
+/// declaration first. A declaring word must be followed by the name with only
+/// spaces between, so `vec3(a, b)` declares nothing.
+fn declarations<'a>(source: &'a str, words: &Language) -> Vec<Declaration<'a>> {
     let mut found: Vec<Declaration> = Vec::new();
     for (line, text) in source.lines().enumerate() {
         let code = text.split("//").next().unwrap_or("");
-        let mut words = code
-            .split(|c: char| !is_identifier(c))
-            .filter(|w| !w.is_empty());
-        while let Some(word) = words.next() {
-            if !DECLARATIONS.contains(&word) {
-                continue;
-            }
-            if let Some(name) = words.next() {
-                let is_new = !found.iter().any(|d| d.name == name);
-                if is_new && !name.starts_with(|c: char| c.is_ascii_digit()) {
-                    found.push(Declaration {
-                        keyword: word,
-                        name,
-                        line,
-                        text: text.trim(),
-                    });
+        // Each identifier with where it ends, and where the next one starts.
+        let identifiers: Vec<(usize, &str)> = code
+            .match_indices(|c: char| is_identifier(c))
+            .fold(Vec::new(), |mut list: Vec<(usize, String)>, (i, c)| {
+                match list.last_mut() {
+                    Some((start, word)) if *start + word.len() == i => word.push_str(c),
+                    _ => list.push((i, c.to_owned())),
                 }
+                list
+            })
+            .into_iter()
+            .map(|(start, word)| (start, &code[start..start + word.len()]))
+            .collect();
+        for pair in identifiers.windows(2) {
+            let [(start, keyword), (name_start, name)] = pair else {
+                continue;
+            };
+            let between = &code[start + keyword.len()..*name_start];
+            let declares = words.declarations.contains(keyword)
+                && !between.is_empty()
+                && between.chars().all(char::is_whitespace);
+            let is_new = !found.iter().any(|d| d.name == *name);
+            if declares && is_new && !name.starts_with(|c: char| c.is_ascii_digit()) {
+                found.push(Declaration {
+                    keyword,
+                    name,
+                    line,
+                    text: text.trim(),
+                });
             }
         }
     }
@@ -430,6 +443,31 @@ mod tests {
             wgsl::type_doc("mat4x4f").unwrap(),
             "Matrix of 4 columns and 4 rows, of f32."
         );
+    }
+
+    #[test]
+    fn glsl_suggestions_and_hover() {
+        let source =
+            "void mainImage(out vec4 fragColor, in vec2 fragCoord) {\n    float glow = iTi";
+        assert_eq!(labels(&format!("{source}|")), ["iTime"]);
+        // GLSL types, not WGSL ones.
+        let types = labels("void mainImage() { ve|");
+        assert!(
+            types.contains(&"vec3".to_owned()) && !types.contains(&"vec3f".to_owned()),
+            "{types:?}"
+        );
+        // Declarations: parameters and variables, not constructor arguments.
+        let source = "void mainImage(out vec4 fragColor, in vec2 fragCoord) {\n    float glow = 1.0;\n    vec3 c = vec3(glow, a, b);\n    gl|";
+        assert_eq!(labels(source), ["glow"]);
+        let source = source.replace('|', "");
+        let at = |word: &str| hover(&source, source.find(word).unwrap() + 1).map(|h| h.title);
+        assert_eq!(at("fragCoord").unwrap(), "vec2 fragCoord");
+        assert_eq!(at("glow").unwrap(), "float glow");
+        assert_eq!(
+            at("mainImage").unwrap(),
+            "mainImage(out vec4 fragColor, in vec2 fragCoord)"
+        );
+        assert!(at("vec3").is_some());
     }
 
     #[test]

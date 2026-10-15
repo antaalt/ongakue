@@ -1,5 +1,7 @@
-//! What the editor knows about WGSL and about the app's inputs, shared by
+//! What the editor knows about WGSL, GLSL and the app's inputs, shared by
 //! highlighting, completion and hover docs.
+
+use render::{ShaderLanguage, shader_language};
 
 /// A documented name: a built-in function, an input or a uniform field.
 pub struct Doc {
@@ -100,6 +102,73 @@ pub const INPUTS: &[Doc] = &[
     doc("PI", ": f32", "3.14159..."),
 ];
 
+/// What the app provides to GLSL visuals (see `common.glsl`), including
+/// Shadertoy's names.
+#[rustfmt::skip]
+pub const GLSL_INPUTS: &[Doc] = &[
+    doc("mainImage", "(out vec4 fragColor, in vec2 fragCoord)", "The visual's entry point, called for each pixel: set fragColor (RGBA, 0..1). fragCoord is in pixels, from the bottom left, like on Shadertoy."),
+    doc("iTime", ": float", "Seconds since start (Shadertoy's name for u.time)."),
+    doc("iResolution", ": vec3", "Canvas size in pixels (Shadertoy's name): .xy, and .z is 1."),
+    doc("iMouse", ": vec4", "Always 0: the app doesn't track the mouse."),
+    doc("band", "(int i) -> float", "Loudness of band i, 0..1. Bands go from 0 (lows) to BAND_COUNT - 1 (highs)."),
+    doc("band_at", "(float t) -> float", "Loudness at t in 0..1 (lows to highs), interpolated between bands."),
+    doc("hue", "(float h) -> vec3", "RGB color from a hue in 0..1 (red, green, blue, back to red)."),
+    doc("note", "(int n) -> float", "MIDI note n (60 = middle C, 69 = A 440 Hz): its velocity, 0..1, while held, then fading out after release."),
+    doc("cc", "(int n) -> float", "MIDI controller n (a knob or fader): its position, 0..1. Knob numbers depend on the device."),
+    doc("BAND_COUNT", ": int", "Number of frequency bands: 64."),
+    doc("PI", ": float", "3.14159..."),
+];
+
+#[rustfmt::skip]
+pub const GLSL_KEYWORDS: &[&str] = &[
+    "break", "case", "const", "continue", "default", "discard", "do", "else", "false", "for",
+    "highp", "if", "in", "inout", "layout", "lowp", "mediump", "out", "precision", "return",
+    "struct", "switch", "true", "uniform", "void", "while",
+];
+
+#[rustfmt::skip]
+pub const GLSL_TYPES: &[&str] = &[
+    "bool", "int", "uint", "float", "vec2", "vec3", "vec4", "ivec2", "ivec3", "ivec4",
+    "uvec2", "uvec3", "uvec4", "bvec2", "bvec3", "bvec4", "mat2", "mat3", "mat4",
+];
+
+/// The words the editor knows for one shader language. Built-in functions
+/// and the uniforms' fields are shared: GLSL uses the same names.
+pub struct Language {
+    pub keywords: &'static [&'static str],
+    pub types: &'static [&'static str],
+    pub inputs: &'static [Doc],
+    /// Words followed by a newly declared name: `let x`, `fn f` in WGSL;
+    /// `float x`, `void f` in GLSL.
+    pub declarations: &'static [&'static str],
+}
+
+pub const WGSL: Language = Language {
+    keywords: KEYWORDS,
+    types: TYPES,
+    inputs: INPUTS,
+    declarations: &["let", "var", "const", "fn", "struct", "alias", "override"],
+};
+
+#[rustfmt::skip]
+pub const GLSL: Language = Language {
+    keywords: GLSL_KEYWORDS,
+    types: GLSL_TYPES,
+    inputs: GLSL_INPUTS,
+    declarations: &[
+        "void", "bool", "int", "uint", "float", "vec2", "vec3", "vec4", "ivec2", "ivec3", "ivec4",
+        "uvec2", "uvec3", "uvec4", "bvec2", "bvec3", "bvec4", "mat2", "mat3", "mat4", "struct",
+    ],
+};
+
+/// The words of the language `source` is written in.
+pub fn language(source: &str) -> &'static Language {
+    match shader_language(source) {
+        ShaderLanguage::Wgsl => &WGSL,
+        ShaderLanguage::Glsl => &GLSL,
+    }
+}
+
 /// The fields of the uniforms, `u.<field>`.
 #[rustfmt::skip]
 pub const FIELDS: &[Doc] = &[
@@ -128,14 +197,32 @@ pub fn type_doc(name: &str) -> Option<String> {
         "atomic" => "Integer safe to modify from several threads.".to_owned(),
         "ptr" => "Pointer: ptr<function, f32>.".to_owned(),
         "sampler" => "How a texture is read (filtering, wrapping).".to_owned(),
+        // GLSL.
+        "float" => "32-bit floating point number (GLSL).".to_owned(),
+        "int" => "32-bit signed integer (GLSL).".to_owned(),
+        "uint" => "32-bit unsigned integer (GLSL). Literals end with u, e.g. 3u.".to_owned(),
+        "mat2" | "mat3" | "mat4" => {
+            let size = &name[3..];
+            format!("Square matrix of {size} columns and {size} rows of floats (GLSL).")
+        }
         _ => {
-            if let Some(rest) = name.strip_prefix("vec") {
+            if let Some(rest) = ["ivec", "uvec", "bvec"]
+                .iter()
+                .find_map(|p| name.strip_prefix(p))
+            {
+                let of = match &name[..1] {
+                    "i" => "int",
+                    "u" => "uint",
+                    _ => "bool",
+                };
+                vector(rest, &format!("{of} (GLSL)"))
+            } else if let Some(rest) = name.strip_prefix("vec") {
                 let (size, suffix) = rest.split_at(1.min(rest.len()));
                 let of = match suffix {
                     "f" => "f32".to_owned(),
                     "i" => "i32".to_owned(),
                     "u" => "u32".to_owned(),
-                    _ => format!("components, e.g. {name}<f32>"),
+                    _ => format!("components, e.g. {name}<f32> in WGSL, floats in GLSL"),
                 };
                 vector(size, &of)
             } else {
@@ -150,5 +237,5 @@ pub fn type_doc(name: &str) -> Option<String> {
             }
         }
     };
-    TYPES.contains(&name).then_some(doc)
+    (TYPES.contains(&name) || GLSL_TYPES.contains(&name)).then_some(doc)
 }

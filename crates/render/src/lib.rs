@@ -11,6 +11,11 @@ use bytemuck::{Pod, Zeroable};
 /// declarations before they appear).
 const COMMON_SHADER: &str = include_str!("shaders/common.wgsl");
 
+/// The same for GLSL visuals: the prelude goes before the visual's code (GLSL
+/// needs declarations first), and `main`, calling its `mainImage`, after.
+const GLSL_PRELUDE: &str = include_str!("shaders/common.glsl");
+const GLSL_MAIN: &str = include_str!("shaders/main.glsl");
+
 /// Built-in visuals: each is a fragment shader defining `fs_main`, selected
 /// with [`Renderer::set_visual`].
 const VISUALS: &[(&str, &str)] = &[
@@ -18,6 +23,8 @@ const VISUALS: &[(&str, &str)] = &[
     ("bars", include_str!("shaders/bars.wgsl")),
     // Shows the value of every input, to check what shaders receive.
     ("debug", include_str!("shaders/debug.wgsl")),
+    // A GLSL visual, written like on Shadertoy.
+    ("glsl", include_str!("shaders/example.glsl")),
 ];
 
 /// Starting point for new visuals. Also drawn by a new visual whose code
@@ -85,27 +92,129 @@ impl std::fmt::Display for ShaderError {
     }
 }
 
+/// The language a visual is written in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ShaderLanguage {
+    /// Defines `fs_main`.
+    Wgsl,
+    /// Defines `mainImage`, like on Shadertoy.
+    Glsl,
+}
+
+/// Tells the language of a visual's code: GLSL visuals define `mainImage`.
+pub fn shader_language(source: &str) -> ShaderLanguage {
+    if source.contains("mainImage") && !source.contains("@fragment") {
+        ShaderLanguage::Glsl
+    } else {
+        ShaderLanguage::Wgsl
+    }
+}
+
 /// Checks that a visual's source compiles.
 pub fn validate_shader(source: &str) -> Result<(), ShaderError> {
-    let full = full_source(source);
-    let module = naga::front::wgsl::parse_str(&full).map_err(|e| ShaderError {
-        message: e.emit_to_string_with_path(&full, "shader"),
-        line: e.location(&full).map(|l| l.line_number as usize),
-    })?;
+    compile(source).map(|_| ())
+}
+
+/// A visual's code, ready for the GPU: WGSL defining the fragment shader
+/// `fs_main` (GLSL is translated).
+fn compile(source: &str) -> Result<String, ShaderError> {
+    match shader_language(source) {
+        ShaderLanguage::Wgsl => {
+            let full = format!("{source}\n{COMMON_SHADER}");
+            let module = naga::front::wgsl::parse_str(&full).map_err(|e| ShaderError {
+                message: e.emit_to_string_with_path(&full, "shader"),
+                line: e.location(&full).map(|l| l.line_number as usize),
+            })?;
+            validate(&module).map_err(|e| ShaderError {
+                message: e.emit_to_string_with_path(&full, "shader"),
+                line: e.location(&full).map(|l| l.line_number as usize),
+            })?;
+            Ok(full)
+        }
+        ShaderLanguage::Glsl => compile_glsl(source),
+    }
+}
+
+type ValidationError = Box<naga::WithSpan<naga::valid::ValidationError>>;
+
+fn validate(module: &naga::Module) -> Result<naga::valid::ModuleInfo, ValidationError> {
     naga::valid::Validator::new(
         naga::valid::ValidationFlags::all(),
         naga::valid::Capabilities::empty(),
     )
-    .validate(&module)
-    .map_err(|e| ShaderError {
-        message: e.emit_to_string_with_path(&full, "shader"),
-        line: e.location(&full).map(|l| l.line_number as usize),
-    })?;
-    Ok(())
+    .validate(module)
+    .map_err(Box::new)
 }
 
-fn full_source(source: &str) -> String {
-    format!("{source}\n{COMMON_SHADER}")
+/// Translates a GLSL visual to WGSL, with errors pointing at the visual's own
+/// lines (not the prelude's).
+fn compile_glsl(source: &str) -> Result<String, ShaderError> {
+    let prelude = GLSL_PRELUDE.trim_end();
+    let full = format!("{prelude}\n{source}\n{GLSL_MAIN}");
+    // Lines before the visual's first one.
+    let offset = prelude.lines().count();
+    let user_lines = source.lines().count().max(1);
+    let error = |kind: String, location: Option<naga::SourceLocation>| {
+        let line = location
+            .map(|l| l.line_number as usize)
+            .filter(|&line| line > offset && line <= offset + user_lines)
+            .map(|line| (line - offset, location.unwrap().line_position as usize));
+        ShaderError {
+            message: located_message(&kind, source, line),
+            line: line.map(|(line, _)| line),
+        }
+    };
+
+    let options = naga::front::glsl::Options::from(naga::ShaderStage::Fragment);
+    let module = naga::front::glsl::Frontend::default()
+        .parse(&options, &full)
+        .map_err(|errors| {
+            let first = &errors.errors[0];
+            let mut kind = first.kind.to_string();
+            if errors.errors.len() > 1 {
+                kind += &format!(" (and {} more)", errors.errors.len() - 1);
+            }
+            error(kind, first.location(&full))
+        })?;
+    let info = validate(&module).map_err(|e| {
+        // The details are in the chain of causes.
+        let mut kind = e.as_inner().to_string();
+        let mut cause = std::error::Error::source(e.as_inner());
+        while let Some(inner) = cause {
+            kind += &format!(": {inner}");
+            cause = inner.source();
+        }
+        error(kind, e.location(&full))
+    })?;
+    let fragment =
+        naga::back::wgsl::write_string(&module, &info, naga::back::wgsl::WriterFlags::empty())
+            .map_err(|e| error(e.to_string(), None))?;
+    // The translation's entry point is GLSL's `main`.
+    Ok(format!(
+        "{}\n{COMMON_VERTEX}",
+        fragment.replacen("fn main(", "fn fs_main(", 1)
+    ))
+}
+
+/// The vertex shader, for translated GLSL visuals: the WGSL one from
+/// common.wgsl, which uses no uniforms.
+const COMMON_VERTEX: &str = "@vertex
+fn vs_main(@builtin(vertex_index) index: u32) -> @builtin(position) vec4<f32> {
+    let uv = vec2<f32>(f32((index << 1u) & 2u), f32(index & 2u));
+    return vec4<f32>(uv * 2.0 - 1.0, 0.0, 1.0);
+}";
+
+/// An error message quoting the visual's line, like naga's for WGSL.
+fn located_message(kind: &str, source: &str, location: Option<(usize, usize)>) -> String {
+    let Some((line, column)) = location else {
+        return format!("error: {kind}");
+    };
+    let code = source.lines().nth(line - 1).unwrap_or("");
+    let margin = " ".repeat(line.to_string().len());
+    format!(
+        "error: {kind}\n{margin} ┌─ shader:{line}:{column}\n{margin} │\n{line} │ {code}\n{margin} │ {}^",
+        " ".repeat(column.saturating_sub(1))
+    )
 }
 
 impl Renderer {
@@ -220,12 +329,14 @@ impl Renderer {
         renderer
     }
 
+    /// Only called with sources that compile (see [`validate_shader`]).
     fn create_pipeline(&self, name: &str, source: &str) -> wgpu::RenderPipeline {
+        let compiled = compile(source).unwrap_or_else(|_| compile(TEMPLATE_SHADER).unwrap());
         let shader = self
             .device
             .create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some(name),
-                source: wgpu::ShaderSource::Wgsl(full_source(source).into()),
+                source: wgpu::ShaderSource::Wgsl(compiled.into()),
             });
         self.device
             .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -420,6 +531,70 @@ mod tests {
                 panic!("{name} does not compile:\n{error}");
             }
         }
+    }
+
+    #[test]
+    fn detects_the_language() {
+        assert_eq!(shader_language(TEMPLATE_SHADER), ShaderLanguage::Wgsl);
+        assert_eq!(
+            shader_language("void mainImage(out vec4 c, in vec2 p) {}"),
+            ShaderLanguage::Glsl
+        );
+    }
+
+    #[test]
+    fn shadertoy_style_glsl_compiles() {
+        // Typical Shadertoy code: defines, helper functions, iTime and iResolution.
+        let source = "#define SPEED 2.0
+float wave(vec2 p) {
+    return 0.5 + 0.5 * sin(10.0 * p.x + SPEED * iTime);
+}
+
+void mainImage(out vec4 fragColor, in vec2 fragCoord) {
+    vec2 uv = fragCoord / iResolution.xy;
+    vec3 col = 0.5 + 0.5 * cos(iTime + uv.xyx + vec3(0, 2, 4));
+    fragColor = vec4(col * wave(uv) * (band(3) + note(60) + cc(21) + u.bass), 1.0);
+}
+";
+        if let Err(error) = validate_shader(source) {
+            panic!("{error}");
+        }
+    }
+
+    #[test]
+    fn glsl_translates_to_valid_wgsl() {
+        let wgsl = compile(include_str!("shaders/example.glsl")).unwrap();
+        let module = naga::front::wgsl::parse_str(&wgsl)
+            .unwrap_or_else(|e| panic!("{}", e.emit_to_string(&wgsl)));
+        validate(&module).unwrap();
+        // The entry points the pipeline uses.
+        let entries: Vec<_> = module
+            .entry_points
+            .iter()
+            .map(|e| e.name.as_str())
+            .collect();
+        assert!(
+            entries.contains(&"fs_main") && entries.contains(&"vs_main"),
+            "{entries:?}"
+        );
+    }
+
+    #[test]
+    fn glsl_errors_point_at_the_users_line() {
+        let source = "void mainImage(out vec4 fragColor, in vec2 fragCoord) {\n    float x = 1.0;\n    fragColor = vec4(oops, 0.0, 0.0, 1.0);\n}\n";
+        let error = validate_shader(source).unwrap_err();
+        assert_eq!(error.line, Some(3), "{error}");
+        assert!(error.message.contains("shader:3:"), "{error}");
+        assert!(error.message.contains("fragColor = vec4(oops"), "{error}");
+    }
+
+    #[test]
+    fn glsl_without_main_image_says_so() {
+        // Detected as GLSL by the comment, but mainImage isn't defined.
+        let source = "// mainImage is missing\nvoid other() {}\n";
+        let error = validate_shader(source).unwrap_err();
+        assert!(error.message.contains("mainImage"), "{error}");
+        assert_eq!(error.line, None);
     }
 
     #[test]

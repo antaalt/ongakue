@@ -27,7 +27,9 @@ Live version: https://antaalt.github.io/ongakue/ (deployed from `main` by GitHub
   (↑ ↓, Enter or Tab to accept) and explains the name under the mouse.
   **New** creates a visual from a starter shader, **Import** opens a `.wgsl`
   file as a new visual, **Export** downloads the current one, and **Delete**
-  removes the ones you added
+  removes the ones you added. Visuals can be written in **WGSL** (`fs_main`) or
+  in **GLSL**, Shadertoy style (`mainImage`, with `iTime` and `iResolution`):
+  many Shadertoy shaders work as pasted (see the built-in "glsl" visual)
 - **Tuning** opens sliders for the analysis settings and the shaders' free
   parameters (`u.params`), with a live plot of the beat detection. Each
   parameter's **MIDI** button links it to a knob: click it, then turn the knob

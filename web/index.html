@@ -42,11 +42,11 @@
       <div id="editor-header">
         <select id="editor-title"></select>
         <button id="editor-new" title="Create a new visual">New</button>
-        <button id="editor-import" title="Open a .wgsl file as a new visual">Import</button>
-        <button id="editor-export" title="Download this visual's code as a .wgsl file">Export</button>
+        <button id="editor-import" title="Open a .wgsl or .glsl file as a new visual">Import</button>
+        <button id="editor-export" title="Download this visual's code as a .wgsl or .glsl file">Export</button>
         <button id="editor-delete" title="Delete this visual (only the ones you added)">Delete</button>
         <button id="editor-close" class="close" title="Close"></button>
-        <input type="file" id="editor-import-file" accept=".wgsl,.txt,text/plain" hidden />
+        <input type="file" id="editor-import-file" accept=".wgsl,.glsl,.frag,.txt,text/plain" hidden />
       </div>
       <div id="editor-body">
         <pre id="editor-gutter" aria-hidden="true"></pre>
@@ -74,6 +74,11 @@ note(n)         MIDI note n (60 = middle C): velocity 0..1, fading after release
                 (the computer keyboard plays notes too, when not typing here)
 cc(n)           MIDI controller n (knob, fader): 0..1
 BAND_COUNT, PI
+
+GLSL works too, written like on Shadertoy: define
+void mainImage(out vec4 fragColor, in vec2 fragCoord) (fragCoord in pixels,
+from the bottom left). iTime and iResolution work, and all the inputs above
+(u.bass, band(i), note(n)... with int arguments). See the "glsl" visual.
 
 Suggestions appear as you type (↑ ↓ to pick, Enter or Tab to accept, Esc to
 close). Hover a name to see what it does.
