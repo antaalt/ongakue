@@ -12,8 +12,8 @@ $text-color: #eee;
 $primary-color: #ff8800;
 $secondary-color: #0099ff;
 // background
-$primary-background: #111;
-$secondary-background: #333;
+$primary-background: rgba(17, 17, 17, 0.5);
+$secondary-background: rgba(51, 51, 51, 0.5);
 
 canvas {
     display: block;
