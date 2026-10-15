@@ -36,6 +36,28 @@ canvas {
     }
 }
 
+// Short notices, e.g. "Link copied".
+#notice {
+    position: fixed;
+    left: 50%;
+    bottom: 24px;
+    z-index: 3;
+    transform: translate(-50%, 8px);
+    padding: 8px 16px;
+    border: 2px solid $primary-color;
+    border-radius: 14px;
+    background: $primary-background;
+    color: $text-color;
+    font: 14px system-ui, sans-serif;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s ease, transform 0.3s ease;
+    &.show {
+        opacity: 1;
+        transform: translate(-50%, 0);
+    }
+}
+
 @import 'builtin';
 
 @import 'control';

@@ -132,6 +132,12 @@ impl ApplicationHandler<UserEvent> for App {
                 self.renderer = Some(*renderer);
                 self.update_visual_list();
                 self.show_current_visual();
+                // The page was opened with a shared link.
+                if let Some((name, source)) = self.editor.take_shared_visual() {
+                    let _ = self
+                        .proxy
+                        .send_event(UserEvent::VisualAdded { name, source });
+                }
             }
             UserEvent::VisualSelected(visual) => {
                 if let Some(renderer) = &mut self.renderer {

@@ -45,6 +45,7 @@
         <button id="editor-new" title="Create a new visual">New</button>
         <button id="editor-import" title="Open a .wgsl or .glsl file as a new visual">Import</button>
         <button id="editor-export" title="Download this visual's code as a .wgsl or .glsl file (Ctrl+S)">Export</button>
+        <button id="editor-share" title="Copy a link to this visual, to share it">Share</button>
         <button id="editor-delete" title="Delete this visual (only the ones you added)">Delete</button>
         <button id="editor-close" class="close" title="Close"></button>
         <input type="file" id="editor-import-file" accept=".wgsl,.glsl,.frag,.txt,text/plain" hidden />
@@ -88,5 +89,6 @@ Edits recompile when you stop typing and are saved in this browser.
 Ctrl+S downloads the code as a file, like Export.</pre>
       </details>
     </div>
+    <div id="notice" role="status" aria-live="polite"></div>
   </body>
 </html>

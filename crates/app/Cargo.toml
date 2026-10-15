@@ -7,6 +7,9 @@ edition.workspace = true
 analysis.workspace = true
 render.workspace = true
 web-time = "1"
+# Shared links: compressed shader code, as URL-safe text.
+base64 = "0.23"
+miniz_oxide = "0.9"
 winit.workspace = true
 log.workspace = true
 
@@ -31,6 +34,7 @@ web-sys = { version = "0.3", features = [
     "Blob",
     "BlobPropertyBag",
     "CanvasRenderingContext2d",
+    "Clipboard",
     "CssStyleDeclaration",
     "Document",
     "DomTokenList",
@@ -49,9 +53,11 @@ web-sys = { version = "0.3", features = [
     "HtmlInputElement",
     "HtmlOptionElement",
     "HtmlSelectElement",
+    "History",
     "HtmlTextAreaElement",
     "InputEvent",
     "KeyboardEvent",
+    "Location",
     "MediaDevices",
     "MediaStream",
     "MediaStreamAudioSourceNode",

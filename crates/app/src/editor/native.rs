@@ -31,4 +31,8 @@ impl Editor {
     }
 
     pub fn save_visuals(&self, _names: &[&str]) {}
+
+    pub fn take_shared_visual(&self) -> Option<(String, String)> {
+        None
+    }
 }

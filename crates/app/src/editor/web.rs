@@ -20,6 +20,7 @@ use winit::event_loop::EventLoopProxy;
 use super::highlight::{highlight, line_numbers};
 use super::names::{file_name, name_from_file, unique_name};
 use super::popups::{Popups, insert_text};
+use super::share;
 use crate::UserEvent;
 use render::{ShaderError, TEMPLATE_SHADER};
 use wasm_bindgen_futures::JsFuture;
@@ -195,13 +196,7 @@ impl Editor {
         let builtin_count = Rc::new(Cell::new(0));
         let names = {
             let visuals = visuals.clone();
-            move || -> Vec<String> {
-                let options = visuals.options();
-                (0..options.length())
-                    .filter_map(|i| options.item(i))
-                    .filter_map(|option| option.text_content())
-                    .collect()
-            }
+            move || option_names(&visuals)
         };
 
         on_click(&document, "editor-new", {
@@ -269,6 +264,39 @@ impl Editor {
             let export = export.clone();
             move || export()
         })?;
+
+        // Share: copies a link carrying the visual's name and code.
+        on_click(&document, "editor-share", {
+            let (code, visuals) = (code.clone(), visuals.clone());
+            move || {
+                let name = visuals
+                    .selected_options()
+                    .item(0)
+                    .and_then(|option| option.text_content())
+                    .unwrap_or_else(|| "shared".to_owned());
+                let location = web_sys::window().unwrap().location();
+                let page = format!(
+                    "{}{}",
+                    location.origin().unwrap_or_default(),
+                    location.pathname().unwrap_or_default()
+                );
+                let link = format!("{page}#{}", share::encode(&name, &code.value()));
+                wasm_bindgen_futures::spawn_local(copy_link(link));
+            }
+        })?;
+
+        // A shared link opened while the app is already open.
+        let on_hash = {
+            let proxy = proxy.clone();
+            let visuals = visuals.clone();
+            Closure::<dyn FnMut()>::new(move || {
+                if let Some((name, source)) = shared_visual(&option_names(&visuals)) {
+                    let _ = proxy.send_event(UserEvent::VisualAdded { name, source });
+                }
+            })
+        };
+        window.add_event_listener_with_callback("hashchange", on_hash.as_ref().unchecked_ref())?;
+        on_hash.forget();
 
         on_click(&document, "editor-delete", {
             let (proxy, visual, builtin_count) =
@@ -413,6 +441,89 @@ impl Editor {
             let _ = storage.set_item(VISUALS_KEY, &names.join("\n"));
         }
     }
+
+    /// The visual of a shared link the page was opened with, if any, named
+    /// so it doesn't clash with the existing ones. Call once the visuals are
+    /// listed.
+    pub fn take_shared_visual(&self) -> Option<(String, String)> {
+        shared_visual(&option_names(&self.visuals))
+    }
+}
+
+/// The names in the visual picker.
+fn option_names(visuals: &HtmlSelectElement) -> Vec<String> {
+    let options = visuals.options();
+    (0..options.length())
+        .filter_map(|i| options.item(i))
+        .filter_map(|option| option.text_content())
+        .collect()
+}
+
+/// Reads a shared link from the address bar, then removes it, so reloading
+/// doesn't add the visual again. Tells the user what happened.
+fn shared_visual(names: &[String]) -> Option<(String, String)> {
+    let window = web_sys::window().unwrap();
+    let hash = window.location().hash().unwrap_or_default();
+    let result = share::decode(hash.strip_prefix('#').unwrap_or(&hash))?;
+    if let Ok(history) = window.history() {
+        let location = window.location();
+        let page = format!(
+            "{}{}",
+            location.pathname().unwrap_or_default(),
+            location.search().unwrap_or_default()
+        );
+        let _ = history.replace_state_with_url(&JsValue::NULL, "", Some(&page));
+    }
+    match result {
+        Ok((name, source)) => {
+            let name = unique_name(&name, names)
+                .or_else(|| unique_name("shared", names))
+                .unwrap();
+            notify(&format!("Added the shared visual \"{name}\""));
+            Some((name, source))
+        }
+        Err(error) => {
+            notify(&error.to_string());
+            None
+        }
+    }
+}
+
+/// Copies a link to the clipboard; if the browser refuses, shows it to copy
+/// by hand.
+async fn copy_link(link: String) {
+    let window = web_sys::window().unwrap();
+    let copied = JsFuture::from(window.navigator().clipboard().write_text(&link)).await;
+    if copied.is_ok() {
+        notify("Link copied: paste it to share this visual");
+    } else {
+        let _ =
+            window.prompt_with_message_and_default("Copy this link to share the visual:", &link);
+    }
+}
+
+thread_local! {
+    /// The timer hiding the current notice.
+    static NOTICE_TIMER: Cell<Option<i32>> = const { Cell::new(None) };
+}
+
+/// Shows a short notice at the bottom of the page for a few seconds.
+pub fn notify(text: &str) {
+    let window = web_sys::window().unwrap();
+    let Some(notice) = window.document().unwrap().get_element_by_id("notice") else {
+        return;
+    };
+    notice.set_text_content(Some(text));
+    let _ = notice.class_list().add_1("show");
+    if let Some(timer) = NOTICE_TIMER.take() {
+        window.clear_timeout_with_handle(timer);
+    }
+    let hide = Closure::once_into_js(move || {
+        let _ = notice.class_list().remove_1("show");
+    });
+    let timer =
+        window.set_timeout_with_callback_and_timeout_and_arguments_0(hide.unchecked_ref(), 3500);
+    NOTICE_TIMER.set(timer.ok());
 }
 
 /// Storage key of the list of visuals the user added; their sources are
