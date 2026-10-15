@@ -36,7 +36,7 @@ Live version: https://antaalt.github.io/ongakue/ (deployed from `main` by GitHub
 
 ## Running
 
-Web (requires [trunk](https://trunkrs.dev) and the `wasm32-unknown-unknown` target):
+Web (requires [trunk](https://trunk-rs.github.io/trunk/) and the `wasm32-unknown-unknown` target):
 
 ```sh
 rustup target add wasm32-unknown-unknown
