@@ -151,7 +151,11 @@ impl ApplicationHandler<UserEvent> for App {
         #[cfg(target_arch = "wasm32")]
         let attributes = {
             use winit::platform::web::WindowAttributesExtWebSys;
-            attributes.with_append(true)
+            // Let the browser handle keys and clicks on the canvas too (F11
+            // for fullscreen, F5, the context menu…): winit blocks them by
+            // default. The app reads the keyboard with its own listener (see
+            // piano/web.rs), and the page doesn't scroll.
+            attributes.with_append(true).with_prevent_default(false)
         };
         let window = Arc::new(event_loop.create_window(attributes).unwrap());
         self.window = Some(window);
