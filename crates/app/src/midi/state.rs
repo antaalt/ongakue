@@ -7,6 +7,12 @@ pub const MIDI_COUNT: usize = 128;
 /// Seconds for a released note to fall to half its velocity.
 const RELEASE_HALF_LIFE: f32 = 0.15;
 
+/// Below this, a released note is off: halving never reaches 0 (it would
+/// take ~20 s to underflow), so `note(n) > 0.0` would stay true that long.
+/// Less than one step of an 8-bit color: the cut can't be seen. A note
+/// released at full velocity reaches it in ~1.2 s.
+const RELEASE_CUTOFF: f32 = 1.0 / 256.0;
+
 /// The MIDI values for one frame.
 pub struct MidiFrame {
     /// Per note (60 = middle C): its velocity (0..1) while held, then fading
@@ -66,7 +72,13 @@ impl MidiState {
     pub fn frame(&mut self, dt: f32) -> MidiFrame {
         let decay = 0.5f32.powf(dt / RELEASE_HALF_LIFE);
         for (note, &held) in self.notes.iter_mut().zip(&self.held) {
-            *note = if held > 0.0 { held } else { *note * decay };
+            *note = if held > 0.0 {
+                held
+            } else if *note * decay >= RELEASE_CUTOFF {
+                *note * decay
+            } else {
+                0.0
+            };
         }
         MidiFrame {
             notes: self.notes,
@@ -110,6 +122,24 @@ mod tests {
             }
             assert!(midi.frame(FRAME).notes[60] < 0.001);
         }
+    }
+
+    #[test]
+    fn released_notes_reach_zero() {
+        let mut midi = MidiState::default();
+        midi.handle(&[0x90, 60, 127]);
+        midi.frame(FRAME);
+        midi.handle(&[0x80, 60, 0]);
+        // Off within ~1.2 s, at 60 frames per second.
+        let frames = (1..=120)
+            .find(|_| midi.frame(FRAME).notes[60] == 0.0)
+            .expect("still on after 2 s");
+        let seconds = frames as f32 * FRAME;
+        assert!((1.0..1.4).contains(&seconds), "off after {seconds} s");
+        // Stays off, and a new note still plays.
+        assert_eq!(midi.frame(FRAME).notes[60], 0.0);
+        midi.handle(&[0x90, 60, 32]);
+        assert!(midi.frame(FRAME).notes[60] > 0.2);
     }
 
     #[test]
