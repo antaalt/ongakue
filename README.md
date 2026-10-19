@@ -23,7 +23,7 @@ Live version: https://antaalt.github.io/ongakue/ (deployed from `main` by GitHub
   Keys typed in a text field, like the shader editor, play nothing
 - **Edit shader** opens the current visual's code in a code editor, with a picker
   at the top to switch visuals: it recompiles as you type, shows errors, and is
-  saved in the browser. With the **Auto** (compile) switch off, edits run only on
+  saved in the browser, which also reopens the visual you had open last. With the **Auto** (compile) switch off, edits run only on
   **Compile** (Ctrl+Enter). Loops stop after 100,000 iterations per pixel (all
   loops together), so an endless loop can't hang the GPU. A shader that still
   does (too much work per pixel) makes

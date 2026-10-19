@@ -125,13 +125,16 @@ impl App {
         self.editor.save_visuals(&names[builtin_count..]);
     }
 
-    /// Loads the displayed visual's source into the editor.
+    /// Loads the displayed visual's source into the editor, and remembers it
+    /// for the next visit.
     fn show_current_visual(&self) {
         let Some(renderer) = &self.renderer else {
             return;
         };
         let visual = renderer.current_visual();
         let source = renderer.visual_source(visual);
+        self.editor
+            .save_current_visual(renderer.visual_name(visual));
         self.editor.show(visual, source);
         self.editor
             .set_error(render::validate_shader(source).err().as_ref());
@@ -178,6 +181,13 @@ impl ApplicationHandler<UserEvent> for App {
                         .unwrap_or_else(|| render::TEMPLATE_SHADER.to_owned());
                     // Errors show when the visual is opened in the editor.
                     let _ = renderer.add_visual(name, source);
+                }
+                // Back to the visual shown last time.
+                let last = self.editor.saved_current_visual();
+                if let Some(visual) = (0..renderer.visual_count())
+                    .find(|&visual| Some(renderer.visual_name(visual)) == last.as_deref())
+                {
+                    renderer.set_visual(visual);
                 }
                 // After a GPU reset: back to the visual that was showing, but
                 // safely.

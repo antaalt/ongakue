@@ -26,6 +26,12 @@ impl Editor {
 
     pub fn forget_source(&self, _name: &str) {}
 
+    pub fn saved_current_visual(&self) -> Option<String> {
+        None
+    }
+
+    pub fn save_current_visual(&self, _name: &str) {}
+
     pub fn saved_visuals(&self) -> Vec<String> {
         Vec::new()
     }

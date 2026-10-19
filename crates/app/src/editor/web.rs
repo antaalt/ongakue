@@ -407,6 +407,17 @@ impl Editor {
         }
     }
 
+    /// The name of the visual shown last, to show it again on the next visit.
+    pub fn saved_current_visual(&self) -> Option<String> {
+        self.storage.as_ref()?.get_item(CURRENT_KEY).ok()?
+    }
+
+    pub fn save_current_visual(&self, name: &str) {
+        if let Some(storage) = &self.storage {
+            let _ = storage.set_item(CURRENT_KEY, name);
+        }
+    }
+
     /// Names of the visuals the user added, in order.
     pub fn saved_visuals(&self) -> Vec<String> {
         let list = self
@@ -511,6 +522,9 @@ pub fn notify(text: &str) {
 /// Storage key of the list of visuals the user added; their sources are
 /// stored like edits, under [`storage_key`].
 const VISUALS_KEY: &str = "ongakue.visuals";
+
+/// Storage key of the name of the visual shown last.
+const CURRENT_KEY: &str = "ongakue.current";
 
 /// Storage key of the auto compile setting: "on" or "off".
 const AUTO_COMPILE_KEY: &str = "ongakue.autocompile";
