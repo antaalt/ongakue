@@ -1,15 +1,13 @@
 //! Completion and hover docs for the editor. Pure functions over the source
-//! text; the popups that show the results are in `web.rs`.
+//! text; CodeMirror shows the results (see `code.rs`).
 //!
-//! Offsets are byte offsets into the source. Positions are (line, column)
-//! as displayed: lines from 0, and columns counting a tab as up to 4 spaces.
+//! Offsets are byte offsets into the source; the browser counts in UTF-16
+//! units instead, see [`utf16_to_byte`] and [`byte_to_utf16`].
 
 use super::wgsl::{self, BUILTINS, Doc, FIELDS, Language, language};
 
 /// Most suggestions shown at once.
 const MAX_SUGGESTIONS: usize = 12;
-/// Must match `tab-size` in the editor's CSS.
-const TAB_SIZE: usize = 4;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Kind {
@@ -22,19 +20,6 @@ pub enum Kind {
     Function,
     Type,
     Keyword,
-}
-
-impl Kind {
-    /// CSS class, matching the highlighting colors.
-    pub fn class(self) -> &'static str {
-        match self {
-            Kind::Local => "l",
-            Kind::Field | Kind::Input => "i",
-            Kind::Function => "f",
-            Kind::Type => "t",
-            Kind::Keyword => "k",
-        }
-    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -190,37 +175,6 @@ pub fn hover(source: &str, offset: usize) -> Option<Hover> {
     )
 }
 
-/// The displayed (line, column) of a byte offset.
-pub fn position(source: &str, offset: usize) -> (usize, usize) {
-    let before = &source[..offset];
-    let line_start = before.rfind('\n').map_or(0, |i| i + 1);
-    let line = before.matches('\n').count();
-    let column = before[line_start..].chars().fold(0, advance);
-    (line, column)
-}
-
-/// The byte offset of the character displayed at (line, column), if there's
-/// one there.
-pub fn offset_at(source: &str, line: usize, column: usize) -> Option<usize> {
-    let line_start = if line == 0 {
-        0
-    } else {
-        source.match_indices('\n').nth(line - 1)?.0 + 1
-    };
-    let mut current = 0;
-    for (i, c) in source[line_start..].char_indices() {
-        if c == '\n' {
-            return None;
-        }
-        let next = advance(current, c);
-        if column < next {
-            return Some(line_start + i);
-        }
-        current = next;
-    }
-    None
-}
-
 /// Converts an offset counted in UTF-16 units (as the browser does) to bytes.
 pub fn utf16_to_byte(source: &str, utf16: usize) -> usize {
     let mut units = 0;
@@ -236,20 +190,6 @@ pub fn utf16_to_byte(source: &str, utf16: usize) -> usize {
 /// Converts a byte offset to UTF-16 units (as the browser counts them).
 pub fn byte_to_utf16(source: &str, byte: usize) -> usize {
     source[..byte].chars().map(char::len_utf16).sum()
-}
-
-pub fn escape_html(text: &str) -> String {
-    text.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-}
-
-fn advance(column: usize, c: char) -> usize {
-    if c == '\t' {
-        (column / TAB_SIZE + 1) * TAB_SIZE
-    } else {
-        column + 1
-    }
 }
 
 fn is_identifier(c: char) -> bool {
@@ -468,19 +408,6 @@ mod tests {
             "mainImage(out vec4 fragColor, in vec2 fragCoord)"
         );
         assert!(at("vec3").is_some());
-    }
-
-    #[test]
-    fn positions_count_tabs_as_display_columns() {
-        let source = "ab\n\tcd";
-        assert_eq!(position(source, 1), (0, 1));
-        assert_eq!(position(source, 4), (1, 4));
-        assert_eq!(offset_at(source, 1, 4), Some(4));
-        // Anywhere over the tab is the tab.
-        assert_eq!(offset_at(source, 1, 2), Some(3));
-        // Past the end of the line, or of the text.
-        assert_eq!(offset_at(source, 0, 5), None);
-        assert_eq!(offset_at(source, 7, 0), None);
     }
 
     #[test]

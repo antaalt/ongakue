@@ -3,23 +3,20 @@
 //! Edits are sent to the app as [`UserEvent::ShaderEdited`] once typing
 //! pauses, and saved in the browser's local storage.
 //!
-//! Highlighting: the textarea's text is transparent, and a `<pre>` with the
-//! highlighted code sits exactly behind it. Typing, selection, undo and
-//! copy/paste all stay native. Completion and hover docs are in `popups.rs`.
+//! The code itself is edited with CodeMirror (see `code.rs`).
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use wasm_bindgen::prelude::*;
 use web_sys::{
-    Document, Event, HtmlButtonElement, HtmlElement, HtmlOptionElement, HtmlSelectElement,
-    HtmlTextAreaElement, InputEvent, KeyboardEvent, MouseEvent, Storage,
+    Document, HtmlButtonElement, HtmlElement, HtmlOptionElement, HtmlSelectElement, KeyboardEvent,
+    Storage,
 };
 use winit::event_loop::EventLoopProxy;
 
-use super::highlight::{highlight, line_numbers};
+use super::code::{self, CodeEditor};
 use super::names::{file_name, name_from_file, unique_name};
-use super::popups::{Popups, insert_text};
 use super::share;
 use crate::UserEvent;
 use render::{ShaderError, TEMPLATE_SHADER};
@@ -35,15 +32,12 @@ pub struct Editor {
     /// Number of built-in visuals, listed first; the others can be deleted.
     builtin_count: Rc<Cell<usize>>,
     delete: HtmlButtonElement,
-    code: HtmlTextAreaElement,
-    /// Re-highlights the code after it changed.
-    refresh: Rc<dyn Fn()>,
-    popups: Rc<Popups>,
+    code: CodeEditor,
+    /// The code as last edited, sent once typing pauses.
+    latest: Rc<RefCell<String>>,
+    /// Shows the language the code is read as.
+    badge: HtmlElement,
     error: HtmlElement,
-    /// Red band behind the line of the error.
-    error_line: HtmlElement,
-    /// Line of the current error, from 1, shown in red in the gutter.
-    error_at: Rc<Cell<Option<usize>>>,
     storage: Option<Storage>,
     /// Index of the visual whose source is in the editor.
     visual: Rc<Cell<usize>>,
@@ -56,87 +50,25 @@ impl Editor {
         let window = web_sys::window().unwrap();
         let document = window.document().unwrap();
         let panel: HtmlElement = element(&document, "editor")?;
-        let code: HtmlTextAreaElement = element(&document, "editor-code")?;
-        let backdrop: HtmlElement = element(&document, "editor-backdrop")?;
-        let highlighted: HtmlElement = element(&document, "editor-highlight")?;
-        let gutter: HtmlElement = element(&document, "editor-gutter")?;
-        let error_at = Rc::new(Cell::new(None));
         let visuals: HtmlSelectElement = element(&document, "editor-title")?;
+        let badge: HtmlElement = element(&document, "editor-language")?;
         let visual = Rc::new(Cell::new(0));
         let pending = Rc::new(Cell::new(None));
-        let popups = Popups::new(
-            code.clone(),
-            element(&document, "editor-complete")?,
-            element(&document, "editor-hover")?,
-        );
 
-        let language: HtmlElement = element(&document, "editor-language")?;
-        let refresh: Rc<dyn Fn()> = {
-            let (code, gutter, error_at) = (code.clone(), gutter.clone(), error_at.clone());
-            Rc::new(move || {
-                let source = code.value();
-                // Extra lines, so the backdrop and gutter can scroll as far as
-                // the textarea.
-                highlighted.set_inner_html(&(highlight(&source) + "\n\n\n"));
-                gutter.set_inner_html(&(line_numbers(&source, error_at.get()) + "\n\n\n"));
-                show_language(&language, render::shader_language(&source));
-            })
-        };
-
-        let on_scroll = {
-            let (code, popups) = (code.clone(), popups.clone());
-            Closure::<dyn FnMut()>::new(move || {
-                backdrop.set_scroll_top(code.scroll_top());
-                backdrop.set_scroll_left(code.scroll_left());
-                gutter.set_scroll_top(code.scroll_top());
-                popups.hide();
-                popups.hide_tooltip();
-            })
-        };
-        code.set_onscroll(Some(on_scroll.as_ref().unchecked_ref()));
-        on_scroll.forget();
-
-        // Moving the cursor or leaving the editor closes the popups.
-        let hide_popups = {
-            let popups = popups.clone();
-            Closure::<dyn FnMut()>::new(move || {
-                popups.hide();
-                popups.hide_tooltip();
-            })
-        };
-        code.set_onclick(Some(hide_popups.as_ref().unchecked_ref()));
-        code.set_onblur(Some(hide_popups.as_ref().unchecked_ref()));
-        hide_popups.forget();
-
-        let on_mousemove = {
-            let popups = popups.clone();
-            Closure::<dyn FnMut(MouseEvent)>::new(move |event: MouseEvent| {
-                popups.hover_at(event.offset_x() as f64, event.offset_y() as f64);
-            })
-        };
-        code.set_onmousemove(Some(on_mousemove.as_ref().unchecked_ref()));
-        on_mousemove.forget();
-
-        let on_mouseleave = {
-            let popups = popups.clone();
-            Closure::<dyn FnMut()>::new(move || popups.hide_tooltip())
-        };
-        code.set_onmouseleave(Some(on_mouseleave.as_ref().unchecked_ref()));
-        on_mouseleave.forget();
-
-        // Saves and recompiles the code in the editor.
+        // Saves and recompiles the code in the editor, once typing pauses.
+        let latest = Rc::new(RefCell::new(String::new()));
         let send_later = {
-            let (proxy, code, visual) = (proxy.clone(), code.clone(), visual.clone());
+            let (proxy, latest, visual) = (proxy.clone(), latest.clone(), visual.clone());
             Closure::<dyn FnMut()>::new(move || {
                 let _ = proxy.send_event(UserEvent::ShaderEdited {
                     visual: visual.get(),
-                    source: code.value(),
+                    source: latest.borrow().clone(),
                 });
             })
         };
-        let schedule_compile: Rc<dyn Fn()> = {
+        let schedule_compile = {
             let pending = pending.clone();
-            Rc::new(move || {
+            move || {
                 let window = web_sys::window().unwrap();
                 if let Some(timer) = pending.take() {
                     window.clear_timeout_with_handle(timer);
@@ -146,41 +78,18 @@ impl Editor {
                     COMPILE_DELAY_MS,
                 );
                 pending.set(timer.ok());
-            })
+            }
         };
-
-        let on_input = {
-            let (refresh, popups) = (refresh.clone(), popups.clone());
-            Closure::<dyn FnMut(Event)>::new(move |event: Event| {
-                refresh();
+        let code = code::create(&element(&document, "editor-body")?, {
+            let (badge, latest) = (badge.clone(), latest.clone());
+            move |source: String| {
+                let language = render::shader_language(&source);
+                show_language(&badge, language);
+                *latest.borrow_mut() = source;
                 schedule_compile();
-                let kind = event.dyn_ref::<InputEvent>().map(InputEvent::input_type);
-                match kind.as_deref() {
-                    Some("insertText") => popups.update(true),
-                    Some(kind) if kind.starts_with("delete") => popups.update(false),
-                    _ => popups.hide(),
-                }
-            })
-        };
-        code.set_oninput(Some(on_input.as_ref().unchecked_ref()));
-        on_input.forget();
-
-        let on_keydown = {
-            let (code, popups) = (code.clone(), popups.clone());
-            Closure::<dyn FnMut(KeyboardEvent)>::new(move |event: KeyboardEvent| {
-                popups.hide_tooltip();
-                if popups.handle_key(&event) {
-                    return;
-                }
-                // Tab indents instead of moving the focus out of the editor.
-                if event.key() == "Tab" && !event.ctrl_key() && !event.alt_key() {
-                    event.prevent_default();
-                    insert_text(&code, "    ");
-                }
-            })
-        };
-        code.set_onkeydown(Some(on_keydown.as_ref().unchecked_ref()));
-        on_keydown.forget();
+                code::language_name(language).to_owned()
+            }
+        });
 
         let on_change = {
             let (proxy, visuals) = (proxy.clone(), visuals.clone());
@@ -251,10 +160,7 @@ impl Editor {
                     .and_then(|option| option.text_content())
                     .unwrap_or_else(|| "shader".to_owned());
                 let source = code.value();
-                let extension = match render::shader_language(&source) {
-                    render::ShaderLanguage::Wgsl => "wgsl",
-                    render::ShaderLanguage::Glsl => "glsl",
-                };
+                let extension = code::language_name(render::shader_language(&source));
                 if let Err(error) = download(&file_name(&name, extension), &source) {
                     log::error!("export failed: {error:?}");
                 }
@@ -354,12 +260,10 @@ impl Editor {
             builtin_count,
             delete: element(&document, "editor-delete")?,
             error: element(&document, "editor-error")?,
-            error_line: element(&document, "editor-error-line")?,
-            error_at,
-            refresh,
-            popups,
             storage: window.local_storage().ok().flatten(),
             code,
+            latest,
+            badge,
             visual,
             pending,
         })
@@ -383,13 +287,14 @@ impl Editor {
         if let Some(timer) = self.pending.take() {
             web_sys::window().unwrap().clear_timeout_with_handle(timer);
         }
-        self.popups.hide();
-        self.popups.hide_tooltip();
         self.visual.set(visual);
         self.visuals.set_selected_index(visual as i32);
         self.delete.set_disabled(visual < self.builtin_count.get());
         self.code.set_value(source);
-        (self.refresh)();
+        let language = render::shader_language(source);
+        self.code.set_language(code::language_name(language));
+        show_language(&self.badge, language);
+        *self.latest.borrow_mut() = source.to_owned();
     }
 
     /// Shows a compile error, or hides it with `None`.
@@ -398,15 +303,10 @@ impl Editor {
             .set_text_content(error.map(|e| e.message.as_str()));
         self.error.set_hidden(error.is_none());
 
-        let line = error.and_then(|e| e.line);
-        if let Some(line) = line {
-            // Must match the padding and line height of the editor's CSS.
-            let top = format!("calc(8px + {} * 1.45em)", line - 1);
-            let _ = self.error_line.style().set_property("top", &top);
-        }
-        self.error_line.set_hidden(line.is_none());
-        self.error_at.set(line);
-        (self.refresh)();
+        // Marks the line in the editor too, with the message's first line on hover.
+        let line = error.and_then(|e| e.line).unwrap_or(0);
+        let summary = error.and_then(|e| e.message.lines().next()).unwrap_or("");
+        self.code.set_error(line as u32, summary);
     }
 
     /// The source saved for a visual, if it was edited.

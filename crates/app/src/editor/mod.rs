@@ -4,18 +4,16 @@
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 mod assist;
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
-mod highlight;
-#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 mod names;
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 mod share;
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 mod wgsl;
 
+#[cfg(target_arch = "wasm32")]
+mod code;
 #[cfg(not(target_arch = "wasm32"))]
 mod native;
-#[cfg(target_arch = "wasm32")]
-mod popups;
 #[cfg(target_arch = "wasm32")]
 mod web;
 

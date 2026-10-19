@@ -21,10 +21,10 @@ Live version: https://antaalt.github.io/ongakue/ (deployed from `main` by GitHub
   white keys from middle C (Q S D F G H J K L M on AZERTY, A S D F… on QWERTY),
   the row above the black keys, and W / X (Z / X on QWERTY) change octave.
   Keys typed in a text field, like the shader editor, play nothing
-- **Edit shader** opens the current visual's WGSL code, with a picker at the top to
-  switch visuals: it recompiles as you type, shows errors, and is saved in the
-  browser. It suggests names as you type
-  (↑ ↓, Enter or Tab to accept) and explains the name under the mouse.
+- **Edit shader** opens the current visual's code in a code editor, with a picker
+  at the top to switch visuals: it recompiles as you type, shows errors, and is
+  saved in the browser. It suggests names as you type (↑ ↓, Enter to accept),
+  explains the name under the mouse, and has search (Ctrl+F) and undo.
   **New** creates a visual from a starter shader, **Import** opens a `.wgsl`
   file as a new visual, **Export** (or Ctrl+S) downloads the current one,
   **Share** copies a link carrying its code (opening the link adds it as a
@@ -49,4 +49,17 @@ Native:
 
 ```sh
 cargo run
+```
+
+### The shader editor
+
+The editor is [CodeMirror](https://codemirror.net/), bundled into
+`web/codemirror/codemirror.js`, which is committed: building the app doesn't
+need Node. To change the editor (`web/codemirror/editor.js`) or update
+CodeMirror, rebuild the bundle with Node installed:
+
+```sh
+cd web/codemirror
+npm install
+npm run build
 ```

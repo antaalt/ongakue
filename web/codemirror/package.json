@@ -1,0 +1,19 @@
+{
+  "name": "ongakue-codemirror",
+  "private": true,
+  "description": "The shader editor (CodeMirror), bundled into codemirror.js. Only needed to update it: the bundle is committed.",
+  "scripts": {
+    "build": "esbuild editor.js --bundle --minify --format=iife --global-name=OngakueCodeMirror --outfile=codemirror.js"
+  },
+  "devDependencies": {
+    "@codemirror/autocomplete": "6.20.3",
+    "@codemirror/commands": "6.11.1",
+    "@codemirror/language": "6.13.1",
+    "@codemirror/lint": "6.9.7",
+    "@codemirror/state": "6.7.6",
+    "@codemirror/view": "6.43.14",
+    "@lezer/highlight": "1.2.5",
+    "codemirror": "6.0.2",
+    "esbuild": "0.28.2"
+  }
+}

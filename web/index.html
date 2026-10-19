@@ -6,6 +6,8 @@
     <title>Ongakue</title>
     <link data-trunk rel="rust" href="../crates/app/Cargo.toml" data-bin="ongakue" />
     <link data-trunk rel="scss" href="style/index.scss"/>
+    <!-- The code editor, bundled from codemirror/editor.js (see codemirror/package.json). -->
+    <script data-trunk src="codemirror/codemirror.js"></script>
   </head>
   <body>
     <div id="controls">
@@ -50,13 +52,8 @@
         <button id="editor-close" class="close" title="Close"></button>
         <input type="file" id="editor-import-file" accept=".wgsl,.glsl,.frag,.txt,text/plain" hidden />
       </div>
-      <div id="editor-body">
-        <pre id="editor-gutter" aria-hidden="true"></pre>
-        <pre id="editor-backdrop" aria-hidden="true"><div id="editor-error-line" hidden></div><code id="editor-highlight"></code></pre>
-        <textarea id="editor-code" wrap="off" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
-        <div id="editor-complete" hidden></div>
-        <div id="editor-hover" hidden></div>
-      </div>
+      <!-- The code editor (CodeMirror) goes here. -->
+      <div id="editor-body"></div>
       <pre id="editor-error" hidden></pre>
       <details id="editor-help">
         <summary>Available inputs</summary>
@@ -82,8 +79,8 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) (fragCoord in pixels,
 from the bottom left). iTime and iResolution work, and all the inputs above
 (u.bass, band(i), note(n)... with int arguments). See the "glsl" visual.
 
-Suggestions appear as you type (↑ ↓ to pick, Enter or Tab to accept, Esc to
-close). Hover a name to see what it does.
+Suggestions appear as you type (↑ ↓ to pick, Enter to accept, Esc to close).
+Hover a name to see what it does. Ctrl+F searches, Ctrl+/ comments lines.
 
 Edits recompile when you stop typing and are saved in this browser.
 Ctrl+S downloads the code as a file, like Export.</pre>

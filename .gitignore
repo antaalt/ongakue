@@ -25,3 +25,5 @@ dist
 
 # vscode specifics
 .vscode
+# The editor bundle is committed; its dependencies are only needed to rebuild it
+web/codemirror/node_modules
