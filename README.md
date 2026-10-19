@@ -23,7 +23,11 @@ Live version: https://antaalt.github.io/ongakue/ (deployed from `main` by GitHub
   Keys typed in a text field, like the shader editor, play nothing
 - **Edit shader** opens the current visual's code in a code editor, with a picker
   at the top to switch visuals: it recompiles as you type, shows errors, and is
-  saved in the browser, which also reopens the visual you had open last. With the **Auto** (compile) switch off, edits run only on
+  saved in the browser, which also reopens the visual you had open last.
+  With the [language server](#the-language-server), suggestions and
+  explanations come from it, with signatures as you type a call, F12 to go to
+  a definition, Shift+F12 to find references and F2 to rename; its errors show
+  along the compile error. The **LSP** badge shows its state. With the **Auto** (compile) switch off, edits run only on
   **Compile** (▶, Ctrl+Enter). Loops stop after 100,000 iterations per pixel (all
   loops together), so an endless loop can't hang the GPU. A shader that still
   does (too much work per pixel) makes
@@ -55,6 +59,29 @@ Native:
 ```sh
 cargo run
 ```
+
+### The language server
+
+The shader editor runs
+[shader-language-server](https://github.com/antaalt/shader-sense) in the
+browser: its WASI build, in workers (`web/lsp/`),
+started the first time the editor opens. `web/codemirror/lsp.js` connects it to
+the editor, showing it each visual's code with the code shared by all visuals
+around it, like when compiling.
+
+The server's wasm file (20 MB) isn't committed: the Pages workflow downloads
+it. To run it locally, download it into `web/lsp/` (without it, the editor
+uses its own suggestions):
+
+```sh
+curl -LO https://github.com/antaalt/shader-sense/releases/download/nightly/shader-language-server-wasm32-wasip1-threads.zip
+unzip -o shader-language-server-wasm32-wasip1-threads.zip shader-language-server.wasm -d web/lsp
+```
+
+It needs shared memory, so a cross-origin isolated page: as GitHub Pages can't
+set the headers for it, `web/coi-serviceworker.js`
+([coi-serviceworker](https://github.com/gzuidhof/coi-serviceworker)) does,
+reloading the page once on the first visit.
 
 ### The shader editor
 

@@ -53,6 +53,33 @@
     font: 16px/1 "Segoe UI Symbol", "Noto Sans Symbols 2", "Apple Symbols", system-ui, sans-serif;
 }
 
+// The language server's state, next to the language.
+#editor-lsp {
+    padding: 2px 6px;
+    border: 1px solid currentColor;
+    border-radius: 10px;
+    font: 600 11px/1.4 ui-monospace, Consolas, monospace;
+    cursor: help;
+    color: #666;
+    &.loading {
+        animation: lsp-loading 1.2s ease-in-out infinite alternate;
+    }
+    &.ready {
+        color: #8fd647;
+    }
+    &.error,
+    &.exited {
+        color: #ff6b6b;
+        text-decoration: line-through;
+    }
+}
+
+@keyframes lsp-loading {
+    to {
+        color: #bbb;
+    }
+}
+
 // Auto compile: a switch, its knob on the right and lit when on.
 #editor-header #editor-auto {
     display: flex;

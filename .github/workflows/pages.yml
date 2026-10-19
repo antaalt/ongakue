@@ -17,6 +17,10 @@ concurrency:
 
 env:
   TRUNK_VERSION: v0.21.14
+  # shader-language-server's release for the shader editor. Nightly: the
+  # tagged releases (up to v1.6.2) don't import their memory, which the
+  # browser host in web/lsp/ needs.
+  SHADER_LANGUAGE_SERVER_RELEASE: nightly
 
 jobs:
   build:
@@ -34,6 +38,13 @@ jobs:
         run: |
           curl -sSL "https://github.com/trunk-rs/trunk/releases/download/${TRUNK_VERSION}/trunk-x86_64-unknown-linux-gnu.tar.gz" \
             | tar -xz -C "$HOME/.cargo/bin"
+
+      # Not committed (20 MB): see "The language server" in the README.
+      - name: Download shader-language-server
+        run: |
+          curl -sSL -o shader-language-server.zip \
+            "https://github.com/antaalt/shader-sense/releases/download/${SHADER_LANGUAGE_SERVER_RELEASE}/shader-language-server-wasm32-wasip1-threads.zip"
+          unzip -o shader-language-server.zip shader-language-server.wasm -d web/lsp
 
       - id: pages
         uses: actions/configure-pages@v6

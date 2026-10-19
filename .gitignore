@@ -27,3 +27,5 @@ dist
 .vscode
 # The editor bundle is committed; its dependencies are only needed to rebuild it
 web/codemirror/node_modules
+# Downloaded: see the README
+web/lsp/shader-language-server.wasm

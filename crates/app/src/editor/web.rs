@@ -130,10 +130,16 @@ impl Editor {
                 code::language_name(language).to_owned()
             }
         };
-        let code = code::create(&element(&document, "editor-body")?, changed, {
-            let compile_now = compile_now.clone();
-            move || compile_now()
-        });
+        let server_badge: HtmlElement = element(&document, "editor-lsp")?;
+        let code = code::create(
+            &element(&document, "editor-body")?,
+            changed,
+            {
+                let compile_now = compile_now.clone();
+                move || compile_now()
+            },
+            move |state, detail| show_server_status(&server_badge, &state, &detail),
+        );
 
         on_click(&document, "editor-compile", {
             let compile_now = compile_now.clone();
@@ -291,9 +297,13 @@ impl Editor {
         on_save.forget();
 
         on_click(&document, "edit", {
-            let panel = panel.clone();
+            let (panel, code) = (panel.clone(), code.clone());
             move || {
-                let _ = panel.class_list().toggle("open");
+                // The language server (a 16 MB download) starts the first time
+                // the editor is opened.
+                if panel.class_list().toggle("open").unwrap_or(false) {
+                    code.start_language_server(SERVER_WORKER, SERVER_WASM);
+                }
             }
         })?;
         on_click(&document, "editor-close", move || {
@@ -356,7 +366,8 @@ impl Editor {
         self.delete.set_disabled(visual < self.builtin_count.get());
         // The same code again (e.g. after a GPU reset): keep the undo history.
         if visual != self.visual.get() || self.code.value() != source {
-            self.code.set_value(source);
+            let name = selected_name(&self.visuals).unwrap_or_default();
+            self.code.set_value(source, &name);
         }
         let language = render::shader_language(source);
         self.code.set_language(code::language_name(language));
@@ -576,6 +587,30 @@ fn download(file_name: &str, text: &str) -> Result<(), JsValue> {
     let revoke = Closure::once_into_js(move || Url::revoke_object_url(&url));
     window.set_timeout_with_callback_and_timeout_and_arguments_0(revoke.unchecked_ref(), 10_000)?;
     Ok(())
+}
+
+/// shader-language-server, in `web/lsp/` (see `web/codemirror/lsp.js`).
+const SERVER_WORKER: &str = "lsp/server-worker.js";
+const SERVER_WASM: &str = "lsp/shader-language-server.wasm";
+
+/// Shows the language server's state on its badge: dim while loading, lit
+/// when ready, red when it failed. The details are in its tooltip.
+fn show_server_status(badge: &HtmlElement, state: &str, detail: &str) {
+    badge.set_hidden(false);
+    badge.set_class_name(state);
+    let title = match state {
+        "ready" => format!(
+            "shader-language-server {detail} is running: suggestions, errors, F12 to go to a definition, F2 to rename"
+        ),
+        "loading" => format!("Starting shader-language-server: {detail}"),
+        _ => format!(
+            "shader-language-server isn't available: {detail}. The editor's own suggestions are used."
+        ),
+    };
+    badge.set_title(&title);
+    if state == "error" {
+        log::warn!("{title}");
+    }
 }
 
 /// Shows the language the code is read as, and why.

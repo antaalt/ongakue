@@ -15,5 +15,8 @@
     "@lezer/highlight": "1.2.5",
     "codemirror": "6.0.2",
     "esbuild": "0.28.2"
+  },
+  "dependencies": {
+    "@codemirror/lsp-client": "6.3.0"
   }
 }

@@ -138,6 +138,21 @@ pub fn shader_language(source: &str) -> ShaderLanguage {
     }
 }
 
+/// What a language server must read around a visual's code to understand
+/// it, as `(before, after)`: the code shared by all visuals, like when
+/// compiling. For WGSL it goes before the visual's code (it's compiled after
+/// it, see `compile`): WGSL allows both, and a server may only know the names
+/// declared above the cursor.
+pub fn language_server_context(language: ShaderLanguage) -> (String, String) {
+    match language {
+        ShaderLanguage::Wgsl => (format!("{}\n", COMMON_SHADER.trim_end()), String::new()),
+        ShaderLanguage::Glsl => (
+            format!("{}\n", GLSL_PRELUDE.trim_end()),
+            format!("\n{GLSL_MAIN}"),
+        ),
+    }
+}
+
 /// Checks that a visual's source compiles.
 pub fn validate_shader(source: &str) -> Result<(), ShaderError> {
     compile(source).map(|_| ())
@@ -799,6 +814,25 @@ fn fs_main(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
             let (all, guarded) = guarded_loops(&module);
             assert_eq!(all, guarded, "{name}");
         }
+    }
+
+    #[test]
+    fn language_server_context_is_valid_code() {
+        // Wrapped like a language server reads it, the code still compiles.
+        let (before, after) = language_server_context(ShaderLanguage::Wgsl);
+        assert!(before.ends_with('\n') && after.is_empty());
+        let wgsl = format!("{before}{TEMPLATE_SHADER}{after}");
+        let module = naga::front::wgsl::parse_str(&wgsl)
+            .unwrap_or_else(|e| panic!("{}", e.emit_to_string(&wgsl)));
+        validate(&module).unwrap();
+
+        let (before, after) = language_server_context(ShaderLanguage::Glsl);
+        assert!(before.ends_with('\n') && after.starts_with('\n'));
+        let glsl = format!("{before}{}{after}", include_str!("shaders/example.glsl"));
+        let options = naga::front::glsl::Options::from(naga::ShaderStage::Fragment);
+        naga::front::glsl::Frontend::default()
+            .parse(&options, &glsl)
+            .unwrap_or_else(|e| panic!("{e:?}"));
     }
 
     #[test]

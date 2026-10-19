@@ -4,6 +4,14 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Ongakue</title>
+    <!-- Makes the page cross-origin isolated, which the language server needs
+         (shared memory) and GitHub Pages can't do with headers. Reloads the
+         page once on the first visit. Not processed by trunk: it must keep
+         its name, at the site's root. -->
+    <script src="coi-serviceworker.js"></script>
+    <link data-trunk rel="copy-file" href="coi-serviceworker.js" />
+    <!-- shader-language-server, run in the browser (see codemirror/lsp.js). -->
+    <link data-trunk rel="copy-dir" href="lsp" />
     <link data-trunk rel="rust" href="../crates/app/Cargo.toml" data-bin="ongakue" />
     <link data-trunk rel="scss" href="style/index.scss"/>
     <!-- The code editor, bundled from codemirror/editor.js (see codemirror/package.json). -->
@@ -44,6 +52,7 @@
       <div id="editor-header">
         <select id="editor-title"></select>
         <span id="editor-language"></span>
+        <span id="editor-lsp" hidden>LSP</span>
         <button id="editor-auto" class="on" role="switch" aria-checked="true" title="Auto compile: run the code as you type. Turned off when a shader hangs the GPU">Auto</button>
         <button id="editor-compile" title="Compile: run the code now (Ctrl+Enter)" aria-label="Compile" class="icon">▶︎</button>
         <button id="editor-new" title="New: create a visual" aria-label="New" class="icon">＋</button>
@@ -83,6 +92,9 @@ from the bottom left). iTime and iResolution work, and all the inputs above
 
 Suggestions appear as you type (↑ ↓ to pick, Enter to accept, Esc to close).
 Hover a name to see what it does. Ctrl+F searches, Ctrl+/ comments lines.
+Once the language server runs (the LSP badge lights up): F12 goes to a
+definition, Shift+F12 finds references, F2 renames, and calls show their
+signature as you type.
 
 Edits recompile when you stop typing and are saved in this browser.
 With Auto compile off, they're still checked for errors and saved, but
