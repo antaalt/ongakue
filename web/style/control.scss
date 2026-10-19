@@ -12,6 +12,7 @@
     background: $primary-background;
     color: $text-color;
     font: 14px system-ui, sans-serif;
+    text-wrap: nowrap;
 
     #status {
         text-wrap: nowrap;
