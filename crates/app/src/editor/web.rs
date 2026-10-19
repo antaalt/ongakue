@@ -215,11 +215,7 @@ impl Editor {
         let export: Rc<dyn Fn()> = {
             let (code, visuals) = (code.clone(), visuals.clone());
             Rc::new(move || {
-                let name = visuals
-                    .selected_options()
-                    .item(0)
-                    .and_then(|option| option.text_content())
-                    .unwrap_or_else(|| "shader".to_owned());
+                let name = selected_name(&visuals).unwrap_or_else(|| "shader".to_owned());
                 let source = code.value();
                 let extension = code::language_name(render::shader_language(&source));
                 if let Err(error) = download(&file_name(&name, extension), &source) {
@@ -236,11 +232,7 @@ impl Editor {
         on_click(&document, "editor-share", {
             let (code, visuals) = (code.clone(), visuals.clone());
             move || {
-                let name = visuals
-                    .selected_options()
-                    .item(0)
-                    .and_then(|option| option.text_content())
-                    .unwrap_or_else(|| "shared".to_owned());
+                let name = selected_name(&visuals).unwrap_or_else(|| "shared".to_owned());
                 let location = web_sys::window().unwrap().location();
                 let page = format!(
                     "{}{}",
@@ -333,12 +325,22 @@ impl Editor {
     }
 
     /// Fills the visual picker, in the renderer's order. The first
-    /// `builtin_count` are built in, and can't be deleted.
+    /// `builtin_count` are built in, and can't be deleted: they show
+    /// [`BUILTIN_ICON`]. Each option's value is the visual's name.
     pub fn set_visuals(&self, names: &[&str], builtin_count: usize) {
         self.builtin_count.set(builtin_count);
         self.visuals.set_length(0);
-        for name in names {
-            if let Ok(option) = HtmlOptionElement::new_with_text(name) {
+        for (index, name) in names.iter().enumerate() {
+            let builtin = index < builtin_count;
+            let text = if builtin {
+                format!("{BUILTIN_ICON} {name}")
+            } else {
+                name.to_string()
+            };
+            if let Ok(option) = HtmlOptionElement::new_with_text_and_value(&text, name) {
+                if builtin {
+                    option.set_title("Built-in visual: comes with the app, can't be deleted");
+                }
                 let _ = self.visuals.add_with_html_option_element(&option);
             }
         }
@@ -442,13 +444,23 @@ impl Editor {
     }
 }
 
-/// The names in the visual picker.
+/// Shown before the names of the built-in visuals in the picker.
+const BUILTIN_ICON: &str = "\u{1F4E6}\u{FE0E}";
+
+/// The names of the visuals in the picker: the options' values, as their
+/// text can have an icon.
 fn option_names(visuals: &HtmlSelectElement) -> Vec<String> {
     let options = visuals.options();
     (0..options.length())
         .filter_map(|i| options.item(i))
-        .filter_map(|option| option.text_content())
+        .filter_map(|option| option.dyn_into::<HtmlOptionElement>().ok())
+        .map(|option| option.value())
         .collect()
+}
+
+/// The name of the visual selected in the picker.
+fn selected_name(visuals: &HtmlSelectElement) -> Option<String> {
+    Some(visuals.value()).filter(|name| !name.is_empty())
 }
 
 /// Reads a shared link from the address bar, then removes it, so reloading
