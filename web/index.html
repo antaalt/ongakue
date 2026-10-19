@@ -19,6 +19,14 @@
   </head>
   <body>
     <div id="controls">
+      <button id="tune" title="Tune the audio" aria-label="Edit audio">Tune</button>
+      <button id="edit" title="Edit shader" aria-label="Edit shader">Edit</button>
+    </div>
+    <div id="tuning" class="window">
+      <div id="tuning-header">
+        <button id="tuning-reset">Reset to defaults</button>
+        <button id="tuning-close" class="close" title="Close"></button>
+      </div>
       <select id="source" title="Where the sound comes from">
         <option value="file">File</option>
         <option value="microphone">Micro</option>
@@ -29,14 +37,6 @@
       </span>
       <span id="status">Choose an audio file</span>
       <button id="midi" title="Use a MIDI keyboard or controller">MIDI</button>
-      <button id="tune">Tuning</button>
-      <button id="edit">Edit shader</button>
-    </div>
-    <div id="tuning" class="window">
-      <div id="tuning-header">
-        <button id="tuning-reset">Reset to defaults</button>
-        <button id="tuning-close" class="close" title="Close"></button>
-      </div>
       <div id="tuning-body">
         <div id="tuning-sliders"></div>
         <h3>Beat detection, last 5 seconds</h3>
