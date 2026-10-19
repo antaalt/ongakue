@@ -39,6 +39,20 @@
     font-size: 14px;
 }
 
+// Buttons showing a symbol instead of a name (the name is in their tooltip).
+// Symbol fonts first, so the symbols are drawn in the button's color rather
+// than as color emoji.
+#editor-header button.icon {
+    display: flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    font: 16px/1 "Segoe UI Symbol", "Noto Sans Symbols 2", "Apple Symbols", system-ui, sans-serif;
+}
+
 // Auto compile: a switch, its knob on the right and lit when on.
 #editor-header #editor-auto {
     display: flex;

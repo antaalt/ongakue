@@ -45,12 +45,12 @@
         <select id="editor-title"></select>
         <span id="editor-language"></span>
         <button id="editor-auto" class="on" role="switch" aria-checked="true" title="Auto compile: run the code as you type. Turned off when a shader hangs the GPU">Auto</button>
-        <button id="editor-compile" title="Run the code now (Ctrl+Enter)">Compile</button>
-        <button id="editor-new" title="Create a new visual">New</button>
-        <button id="editor-import" title="Open a .wgsl or .glsl file as a new visual">Import</button>
-        <button id="editor-export" title="Download this visual's code as a .wgsl or .glsl file (Ctrl+S)">Export</button>
-        <button id="editor-share" title="Copy a link to this visual, to share it">Share</button>
-        <button id="editor-delete" title="Delete this visual (only the ones you added)">Delete</button>
+        <button id="editor-compile" title="Compile: run the code now (Ctrl+Enter)" aria-label="Compile" class="icon">▶︎</button>
+        <button id="editor-new" title="New: create a visual" aria-label="New" class="icon">＋</button>
+        <button id="editor-import" title="Import: open a .wgsl or .glsl file as a new visual" aria-label="Import" class="icon">📂︎</button>
+        <button id="editor-export" title="Export: download this visual's code as a .wgsl or .glsl file (Ctrl+S)" aria-label="Export" class="icon">💾︎</button>
+        <button id="editor-share" title="Share: copy a link to this visual" aria-label="Share" class="icon">🔗︎</button>
+        <button id="editor-delete" title="Delete: remove this visual (only the ones you added)" aria-label="Delete" class="icon">🗑︎</button>
         <button id="editor-close" class="close" title="Close"></button>
         <input type="file" id="editor-import-file" accept=".wgsl,.glsl,.frag,.txt,text/plain" hidden />
       </div>

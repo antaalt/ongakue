@@ -24,16 +24,16 @@ Live version: https://antaalt.github.io/ongakue/ (deployed from `main` by GitHub
 - **Edit shader** opens the current visual's code in a code editor, with a picker
   at the top to switch visuals: it recompiles as you type, shows errors, and is
   saved in the browser, which also reopens the visual you had open last. With the **Auto** (compile) switch off, edits run only on
-  **Compile** (Ctrl+Enter). Loops stop after 100,000 iterations per pixel (all
+  **Compile** (▶, Ctrl+Enter). Loops stop after 100,000 iterations per pixel (all
   loops together), so an endless loop can't hang the GPU. A shader that still
   does (too much work per pixel) makes
   the browser reset it: the app recovers, runs a safe version of that visual
   until it's fixed and compiled, and turns auto compile off. It suggests names as you type (↑ ↓, Enter to accept),
   explains the name under the mouse, and has search (Ctrl+F) and undo.
-  **New** creates a visual from a starter shader, **Import** opens a `.wgsl`
-  file as a new visual, **Export** (or Ctrl+S) downloads the current one,
-  **Share** copies a link carrying its code (opening the link adds it as a
-  visual), and **Delete** removes the ones you added. Visuals can be written in **WGSL** (`fs_main`) or
+  **New** (＋) creates a visual from a starter shader, **Import** (📂) opens a `.wgsl`
+  file as a new visual, **Export** (💾, or Ctrl+S) downloads the current one,
+  **Share** (🔗) copies a link carrying its code (opening the link adds it as a
+  visual), and **Delete** (🗑) removes the ones you added. Visuals can be written in **WGSL** (`fs_main`) or
   in **GLSL**, Shadertoy style (`mainImage`, with `iTime` and `iResolution`):
   many Shadertoy shaders work as pasted (see the built-in "glsl" visual)
 - **Tuning** opens sliders for the analysis settings and the shaders' free
