@@ -170,7 +170,56 @@
     }
 }
 
-
+// CodeMirror's search panel (Ctrl+F). Under #editor-body to win over
+// CodeMirror's own styles (`.ͼ1 .cm-button`…).
+#editor-body {
+    .cm-panel.cm-search {
+        border-top: 2px solid $primary-color;
+        padding: 6px 36px 6px 8px;
+        font: 13px system-ui, sans-serif;
+        color: #ccc;
+        label {
+            font-size: 12px;
+            input { accent-color: $primary-color; }
+        }
+    }
+    .cm-panels {
+        background-color: transparent;
+    }
+    .cm-textfield {
+        padding: 3px 8px;
+        border: 1px solid $primary-color;
+        border-radius: 10px;
+        background: $primary-background;
+        font: 13px ui-monospace, Consolas, monospace;
+        color: $primary-color;
+        outline: none;
+        &:focus { border-color: $primary-color; }
+    }
+    .cm-button {
+        // CodeMirror's dark theme paints a gradient on its buttons.
+        background-image: none;
+        padding: 2px 10px;
+        font-size: 12px;
+        border: 1px solid $primary-color;
+        border-radius: 10px;
+        color: $primary-color;
+    }
+    .cm-search [name="close"] {
+        top: 6px;
+        right: 8px;
+        font-size: 18px;
+        color: $primary-color;
+        cursor: pointer;
+    }
+    .cm-searchMatch {
+        background: rgba(255, 136, 0, 0.25);
+        outline: 1px solid rgba(255, 136, 0, 0.6);
+    }
+    .cm-searchMatch-selected {
+        background: rgba(255, 136, 0, 0.55);
+    }
+}
 
 @media (max-width: 700px) {
   #editor-header {
