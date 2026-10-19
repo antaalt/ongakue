@@ -36,13 +36,23 @@ extern "C" {
 }
 
 /// Creates the editor in `parent`. `changed` gets the code after each edit,
-/// and returns its language's name, to color it accordingly.
-pub fn create(parent: &HtmlElement, changed: impl FnMut(String) -> String + 'static) -> CodeEditor {
+/// and returns its language's name, to color it accordingly. `compile` is
+/// called on Ctrl+Enter.
+pub fn create(
+    parent: &HtmlElement,
+    changed: impl FnMut(String) -> String + 'static,
+    compile: impl FnMut() + 'static,
+) -> CodeEditor {
     let hooks = Object::new();
     set(
         &hooks,
         "changed",
         Closure::<dyn FnMut(String) -> String>::new(changed).into_js_value(),
+    );
+    set(
+        &hooks,
+        "compile",
+        Closure::<dyn FnMut()>::new(compile).into_js_value(),
     );
     set(
         &hooks,

@@ -44,6 +44,8 @@
       <div id="editor-header">
         <select id="editor-title"></select>
         <span id="editor-language"></span>
+        <button id="editor-auto" class="on" role="switch" aria-checked="true" title="Auto compile: run the code as you type. Turned off when a shader hangs the GPU">Auto</button>
+        <button id="editor-compile" title="Run the code now (Ctrl+Enter)">Compile</button>
         <button id="editor-new" title="Create a new visual">New</button>
         <button id="editor-import" title="Open a .wgsl or .glsl file as a new visual">Import</button>
         <button id="editor-export" title="Download this visual's code as a .wgsl or .glsl file (Ctrl+S)">Export</button>
@@ -83,6 +85,11 @@ Suggestions appear as you type (↑ ↓ to pick, Enter to accept, Esc to close).
 Hover a name to see what it does. Ctrl+F searches, Ctrl+/ comments lines.
 
 Edits recompile when you stop typing and are saved in this browser.
+With Auto compile off, they're still checked for errors and saved, but
+only run on Compile (Ctrl+Enter); the Auto switch turns it on and off. Loops stop after 100000 iterations per
+pixel, counting all loops, so an endless loop ends. If a shader still hangs
+the GPU (too much work per pixel), the GPU is reset: the visual then runs a safe version until
+you fix it and press Compile, and Auto compile is turned off.
 Ctrl+S downloads the code as a file, like Export.</pre>
       </details>
     </div>

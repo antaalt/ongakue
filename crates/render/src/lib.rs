@@ -2,9 +2,13 @@
 //! target and a size, and draws a frame from a [`Spectrum`].
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use analysis::{BAND_COUNT, Spectrum};
 use bytemuck::{Pod, Zeroable};
+
+mod guard;
+pub use guard::MAX_ITERATIONS;
 
 /// Code shared by all visuals. Appended after each visual's code, so errors
 /// report line numbers matching what the user wrote (WGSL allows using
@@ -75,6 +79,9 @@ pub struct Renderer {
     params: [f32; 4],
     notes: [f32; MIDI_COUNT],
     controls: [f32; MIDI_COUNT],
+    /// Set when the GPU device is lost, e.g. reset by the system because a
+    /// shader ran too long.
+    lost: Arc<AtomicBool>,
 }
 
 /// Why a shader doesn't compile.
@@ -137,7 +144,7 @@ pub fn validate_shader(source: &str) -> Result<(), ShaderError> {
 }
 
 /// A visual's code, ready for the GPU: WGSL defining the fragment shader
-/// `fs_main` (GLSL is translated).
+/// `fs_main` (GLSL is translated), with its loops guarded (see `guard.rs`).
 fn compile(source: &str) -> Result<String, ShaderError> {
     match shader_language(source) {
         ShaderLanguage::Wgsl => {
@@ -150,10 +157,33 @@ fn compile(source: &str) -> Result<String, ShaderError> {
                 message: e.emit_to_string_with_path(&full, "shader"),
                 line: e.location(&full).map(|l| l.line_number as usize),
             })?;
-            Ok(full)
+            guarded_wgsl(module)
         }
         ShaderLanguage::Glsl => compile_glsl(source),
     }
+}
+
+/// The module as WGSL, with its loops guarded. Only for modules that are
+/// valid: the errors are the user's code's, before guarding.
+fn guarded_wgsl(mut module: naga::Module) -> Result<String, ShaderError> {
+    guard::guard_loops(&mut module);
+    // A guard can leave a loop at a different iteration in each pixel, so
+    // derivatives (`dpdx`, `fwidth`…) after a loop are, strictly, no longer
+    // in uniform control flow. Accept them, as without the guards.
+    let info = naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all() - naga::valid::ValidationFlags::CONTROL_FLOW_UNIFORMITY,
+        naga::valid::Capabilities::empty(),
+    )
+    .validate(&module);
+    let internal = |error: String| ShaderError {
+        message: format!("error: internal, while guarding loops: {error}"),
+        line: None,
+    };
+    let info = info.map_err(|e| internal(e.into_inner().to_string()))?;
+    let wgsl =
+        naga::back::wgsl::write_string(&module, &info, naga::back::wgsl::WriterFlags::empty())
+            .map_err(|e| internal(e.to_string()))?;
+    Ok(format!("diagnostic(off, derivative_uniformity);\n{wgsl}"))
 }
 
 type ValidationError = Box<naga::WithSpan<naga::valid::ValidationError>>;
@@ -197,7 +227,7 @@ fn compile_glsl(source: &str) -> Result<String, ShaderError> {
             }
             error(kind, first.location(&full))
         })?;
-    let info = validate(&module).map_err(|e| {
+    validate(&module).map_err(|e| {
         // The details are in the chain of causes.
         let mut kind = e.as_inner().to_string();
         let mut cause = std::error::Error::source(e.as_inner());
@@ -207,14 +237,12 @@ fn compile_glsl(source: &str) -> Result<String, ShaderError> {
         }
         error(kind, e.location(&full))
     })?;
-    let fragment =
-        naga::back::wgsl::write_string(&module, &info, naga::back::wgsl::WriterFlags::empty())
-            .map_err(|e| error(e.to_string(), None))?;
     // The translation's entry point is GLSL's `main`.
-    Ok(format!(
-        "{}\n{COMMON_VERTEX}",
-        fragment.replacen("fn main(", "fn fs_main(", 1)
-    ))
+    let mut module = module;
+    for entry_point in &mut module.entry_points {
+        entry_point.name = "fs_main".to_owned();
+    }
+    Ok(format!("{}\n{COMMON_VERTEX}", guarded_wgsl(module)?))
 }
 
 /// The vertex shader, for translated GLSL visuals: the WGSL one from
@@ -280,6 +308,16 @@ impl Renderer {
         // Log GPU errors instead of panicking (the default). Shaders are
         // validated before use, but a browser may still reject one.
         device.on_uncaptured_error(Arc::new(|error| log::error!("GPU error: {error}")));
+        // A shader running too long (an endless loop…) makes the system reset
+        // the GPU: the device is lost, and the app must make a new renderer.
+        let lost = Arc::new(AtomicBool::new(false));
+        device.set_device_lost_callback({
+            let lost = lost.clone();
+            move |reason, message| {
+                log::error!("GPU device lost ({reason:?}): {message}");
+                lost.store(true, Ordering::Relaxed);
+            }
+        });
 
         let mut config = surface
             .get_default_config(&adapter, width.max(1), height.max(1))
@@ -337,6 +375,7 @@ impl Renderer {
             params: [0.0; 4],
             notes: [0.0; MIDI_COUNT],
             controls: [0.0; MIDI_COUNT],
+            lost,
         };
         renderer.visuals = VISUALS
             .iter()
@@ -467,6 +506,33 @@ impl Renderer {
         self.controls = *controls;
     }
 
+    /// Whether the GPU device was lost. The renderer can't draw anymore: make
+    /// a new one.
+    pub fn is_lost(&self) -> bool {
+        self.lost.load(Ordering::Relaxed)
+    }
+
+    /// Loses the GPU device on purpose, as a GPU reset would: to test the
+    /// recovery without hanging the GPU.
+    pub fn lose_device(&self) {
+        self.device.destroy();
+    }
+
+    /// Keeps a visual's source, but runs a safe version instead: the original
+    /// of a built-in visual, the template for the others. For a visual whose
+    /// code hung the GPU.
+    pub fn suspend_visual(&mut self, index: usize) {
+        let visual = &self.visuals[index];
+        let safe = visual.builtin.unwrap_or(TEMPLATE_SHADER);
+        self.visuals[index].pipeline = self.create_pipeline(&visual.name, safe);
+    }
+
+    /// Replaces a visual's source without running it: the visual keeps
+    /// running its current version until [`Renderer::set_visual_source`].
+    pub fn set_visual_text(&mut self, index: usize, source: String) {
+        self.visuals[index].source = source;
+    }
+
     /// Replaces a visual's source. If it doesn't compile, the error is
     /// returned and the visual keeps running its last working version.
     pub fn set_visual_source(&mut self, index: usize, source: String) -> Result<(), ShaderError> {
@@ -480,6 +546,9 @@ impl Renderer {
 
     /// `time` is in seconds since start, and drives the animations.
     pub fn render(&mut self, spectrum: &Spectrum, time: f32) {
+        if self.is_lost() {
+            return;
+        }
         let (frame, suboptimal) = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame) => (frame, false),
             wgpu::CurrentSurfaceTexture::Suboptimal(frame) => (frame, true),
@@ -623,6 +692,113 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
             shader_language("x = mainImage(c, p);"),
             ShaderLanguage::Wgsl
         );
+    }
+
+    /// Compiles and checks the WGSL given to the GPU.
+    fn compiled_module(source: &str) -> (String, naga::Module) {
+        let wgsl = compile(source).unwrap_or_else(|e| panic!("{e}"));
+        let module = naga::front::wgsl::parse_str(&wgsl)
+            .unwrap_or_else(|e| panic!("{}", e.emit_to_string(&wgsl)));
+        validate(&module).unwrap_or_else(|e| panic!("{}", e.emit_to_string(&wgsl)));
+        (wgsl, module)
+    }
+
+    /// Counts the loops of a block, and the ones starting with the guard.
+    fn loops(block: &naga::Block) -> (usize, usize) {
+        let mut found = (0, 0);
+        for statement in block.iter() {
+            let (all, guarded) = match statement {
+                naga::Statement::Block(inner) => loops(inner),
+                naga::Statement::If { accept, reject, .. } => {
+                    let (a, b) = (loops(accept), loops(reject));
+                    (a.0 + b.0, a.1 + b.1)
+                }
+                naga::Statement::Switch { cases, .. } => cases
+                    .iter()
+                    .map(|case| loops(&case.body))
+                    .fold((0, 0), |a, b| (a.0 + b.0, a.1 + b.1)),
+                naga::Statement::Loop { body, .. } => {
+                    let inner = loops(body);
+                    // The guard: count, store, then `if … { break; }`, before
+                    // the loop's own code.
+                    let guarded = matches!(
+                        body.iter().find(|s| matches!(s, naga::Statement::If { .. })),
+                        Some(naga::Statement::If { accept, .. })
+                            if matches!(accept.first(), Some(naga::Statement::Break))
+                    ) && body
+                        .iter()
+                        .any(|s| matches!(s, naga::Statement::Store { .. }));
+                    (inner.0 + 1, inner.1 + guarded as usize)
+                }
+                _ => (0, 0),
+            };
+            found = (found.0 + all, found.1 + guarded);
+        }
+        found
+    }
+
+    fn guarded_loops(module: &naga::Module) -> (usize, usize) {
+        module
+            .functions
+            .iter()
+            .map(|(_, f)| &f.body)
+            .chain(module.entry_points.iter().map(|e| &e.function.body))
+            .map(loops)
+            .fold((0, 0), |a, b| (a.0 + b.0, a.1 + b.1))
+    }
+
+    #[test]
+    fn every_loop_is_guarded() {
+        let source = "fn helper() -> f32 {
+    var x = 0.0;
+    while x < 10.0 { x += 1.0; }
+    return x;
+}
+
+@fragment
+fn fs_main(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
+    var total = 0.0;
+    for (var i = 0; i < 10; i++) {
+        for (var j = 0; j < 10; j++) {
+            if total > 5.0 { loop { total -= 1.0; if total < 0.0 { break; } } }
+            total += helper();
+        }
+    }
+    // Endless: stopped by the guard.
+    loop {}
+    return vec4<f32>(fwidth(total), 0.0, 0.0, 1.0);
+}
+";
+        let (wgsl, module) = compiled_module(source);
+        assert_eq!(guarded_loops(&module), (5, 5), "{wgsl}");
+        assert!(wgsl.contains(&format!("{}u", MAX_ITERATIONS)), "{wgsl}");
+    }
+
+    #[test]
+    fn glsl_loops_are_guarded() {
+        let source = "void mainImage(out vec4 fragColor, in vec2 fragCoord) {
+    float t = 0.0;
+    for (int i = 0; i < 64; i++) { t += 0.1; }
+    while (true) { t += 1.0; }
+    do { t -= 1.0; } while (t > 0.0);
+    fragColor = vec4(t, 0.0, 0.0, 1.0);
+}
+";
+        let (wgsl, module) = compiled_module(source);
+        let (all, guarded) = guarded_loops(&module);
+        assert!(
+            all >= 3 && guarded == all,
+            "{all} loops, {guarded} guarded:\n{wgsl}"
+        );
+    }
+
+    #[test]
+    fn builtin_visuals_still_compile_guarded() {
+        for (name, source) in VISUALS.iter().chain([&("template", TEMPLATE_SHADER)]) {
+            let (_, module) = compiled_module(source);
+            let (all, guarded) = guarded_loops(&module);
+            assert_eq!(all, guarded, "{name}");
+        }
     }
 
     #[test]

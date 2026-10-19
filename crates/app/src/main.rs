@@ -26,8 +26,13 @@ enum UserEvent {
     VisualAdded { name: String, source: String },
     /// A visual added earlier was deleted.
     VisualDeleted(usize),
-    /// The shader of a visual was edited.
-    ShaderEdited { visual: usize, source: String },
+    /// The shader of a visual was edited. It runs if `compile`, otherwise
+    /// it's only saved and checked for errors.
+    ShaderEdited {
+        visual: usize,
+        source: String,
+        compile: bool,
+    },
     /// Restore a visual's built-in shader.
     ShaderReset { visual: usize },
 }
@@ -45,9 +50,65 @@ struct App {
     analyzer: Analyzer,
     start: Instant,
     last_frame: Instant,
+    /// The visual that was showing when the GPU was reset, to run safely in
+    /// the next renderer.
+    suspended: Option<usize>,
+}
+
+#[cfg(target_arch = "wasm32")]
+thread_local! {
+    static SIMULATE_GPU_RESET: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Loses the GPU device at the next frame, as a GPU reset would, to test the
+/// recovery: `wasmBindings.simulate_gpu_reset()` in the browser's console.
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen]
+pub fn simulate_gpu_reset() {
+    SIMULATE_GPU_RESET.set(true);
 }
 
 impl App {
+    /// Starts the GPU setup, which sends [`UserEvent::RendererReady`] when done.
+    fn create_renderer(&self) {
+        let Some(window) = self.window.clone() else {
+            return;
+        };
+        let size = window.inner_size();
+        let init = Renderer::new(window, size.width, size.height);
+        let proxy = self.proxy.clone();
+
+        // Adapter/device requests are async: block natively, spawn on the web.
+        #[cfg(target_arch = "wasm32")]
+        wasm_bindgen_futures::spawn_local(async move {
+            let _ = proxy.send_event(UserEvent::RendererReady(Box::new(init.await)));
+        });
+        #[cfg(not(target_arch = "wasm32"))]
+        let _ = proxy.send_event(UserEvent::RendererReady(Box::new(pollster::block_on(init))));
+    }
+
+    /// After a GPU reset, most likely caused by a shader running too long:
+    /// makes a new renderer, in which the visual that was showing runs a safe
+    /// version, and turns auto compile off so the code isn't run again before
+    /// it's fixed.
+    fn recover_from_gpu_reset(&mut self) {
+        let Some(renderer) = self.renderer.take() else {
+            return;
+        };
+        let visual = renderer.current_visual();
+        let name = renderer.visual_name(visual).to_owned();
+        drop(renderer);
+        log::warn!("GPU reset while showing \"{name}\": recreating the renderer");
+        self.suspended = Some(visual);
+        self.editor.set_auto_compile(false);
+        self.editor.notify(&format!(
+            "The GPU was reset, probably because \"{name}\" took too long to draw \
+             (an endless loop?). It runs a safe version until you press Compile, \
+             and auto compile is off."
+        ));
+        self.create_renderer();
+    }
+
     /// Shows the visuals in the editor's picker, and saves the list of the
     /// ones the user added (listed after the built-in ones).
     fn update_visual_list(&self) {
@@ -90,19 +151,8 @@ impl ApplicationHandler<UserEvent> for App {
             attributes.with_append(true)
         };
         let window = Arc::new(event_loop.create_window(attributes).unwrap());
-        self.window = Some(window.clone());
-
-        let size = window.inner_size();
-        let init = Renderer::new(window, size.width, size.height);
-        let proxy = self.proxy.clone();
-
-        // Adapter/device requests are async: block natively, spawn on the web.
-        #[cfg(target_arch = "wasm32")]
-        wasm_bindgen_futures::spawn_local(async move {
-            let _ = proxy.send_event(UserEvent::RendererReady(Box::new(init.await)));
-        });
-        #[cfg(not(target_arch = "wasm32"))]
-        let _ = proxy.send_event(UserEvent::RendererReady(Box::new(pollster::block_on(init))));
+        self.window = Some(window);
+        self.create_renderer();
     }
 
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: UserEvent) {
@@ -128,6 +178,14 @@ impl ApplicationHandler<UserEvent> for App {
                         .unwrap_or_else(|| render::TEMPLATE_SHADER.to_owned());
                     // Errors show when the visual is opened in the editor.
                     let _ = renderer.add_visual(name, source);
+                }
+                // After a GPU reset: back to the visual that was showing, but
+                // safely.
+                if let Some(visual) = self.suspended.take()
+                    && visual < renderer.visual_count()
+                {
+                    renderer.set_visual(visual);
+                    renderer.suspend_visual(visual);
                 }
                 self.renderer = Some(*renderer);
                 self.update_visual_list();
@@ -166,7 +224,11 @@ impl ApplicationHandler<UserEvent> for App {
                     self.show_current_visual();
                 }
             }
-            UserEvent::ShaderEdited { visual, source } => {
+            UserEvent::ShaderEdited {
+                visual,
+                source,
+                compile,
+            } => {
                 let Some(renderer) = &mut self.renderer else {
                     return;
                 };
@@ -176,8 +238,14 @@ impl ApplicationHandler<UserEvent> for App {
                 } else {
                     self.editor.save_source(name, &source);
                 }
-                let result = renderer.set_visual_source(visual, source);
-                self.editor.set_error(result.err().as_ref());
+                if compile {
+                    let result = renderer.set_visual_source(visual, source);
+                    self.editor.set_error(result.err().as_ref());
+                } else {
+                    self.editor
+                        .set_error(render::validate_shader(&source).err().as_ref());
+                    renderer.set_visual_text(visual, source);
+                }
             }
             UserEvent::ShaderReset { visual } => {
                 let Some(renderer) = &mut self.renderer else {
@@ -205,6 +273,15 @@ impl ApplicationHandler<UserEvent> for App {
                 }
             }
             WindowEvent::RedrawRequested => {
+                #[cfg(target_arch = "wasm32")]
+                if SIMULATE_GPU_RESET.take()
+                    && let Some(renderer) = &self.renderer
+                {
+                    renderer.lose_device();
+                }
+                if self.renderer.as_ref().is_some_and(Renderer::is_lost) {
+                    self.recover_from_gpu_reset();
+                }
                 let now = Instant::now();
                 // Clamped, so a long pause (e.g. a hidden tab) doesn't make a jump.
                 let dt = (now - self.last_frame).as_secs_f32().min(0.1);
@@ -282,6 +359,7 @@ fn main() {
         samples: Box::new([0.0; audio::SAMPLE_COUNT]),
         start: Instant::now(),
         last_frame: Instant::now(),
+        suspended: None,
     };
 
     #[cfg(target_arch = "wasm32")]

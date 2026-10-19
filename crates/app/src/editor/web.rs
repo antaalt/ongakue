@@ -1,7 +1,8 @@
 //! In-browser shader editor. The panel's elements are defined in `index.html`.
 //!
 //! Edits are sent to the app as [`UserEvent::ShaderEdited`] once typing
-//! pauses, and saved in the browser's local storage.
+//! pauses, and saved in the browser's local storage. With auto compile off,
+//! they run only when asked (the Compile button, Ctrl+Enter).
 //!
 //! The code itself is edited with CodeMirror (see `code.rs`).
 
@@ -43,6 +44,9 @@ pub struct Editor {
     visual: Rc<Cell<usize>>,
     /// Timer of the recompile waiting for typing to pause.
     pending: Rc<Cell<Option<i32>>>,
+    /// Whether edits run as soon as typing pauses.
+    auto_compile: Rc<Cell<bool>>,
+    auto_button: HtmlButtonElement,
 }
 
 impl Editor {
@@ -54,15 +58,51 @@ impl Editor {
         let badge: HtmlElement = element(&document, "editor-language")?;
         let visual = Rc::new(Cell::new(0));
         let pending = Rc::new(Cell::new(None));
+        let storage = window.local_storage().ok().flatten();
+        let auto_compile = Rc::new(Cell::new(
+            storage
+                .as_ref()
+                .and_then(|storage| storage.get_item(AUTO_COMPILE_KEY).ok().flatten())
+                .as_deref()
+                != Some("off"),
+        ));
+        let auto_button: HtmlButtonElement = element(&document, "editor-auto")?;
+        show_auto_compile(&auto_button, auto_compile.get());
 
-        // Saves and recompiles the code in the editor, once typing pauses.
+        // Saves the code in the editor once typing pauses, and recompiles it
+        // with auto compile on.
         let latest = Rc::new(RefCell::new(String::new()));
         let send_later = {
-            let (proxy, latest, visual) = (proxy.clone(), latest.clone(), visual.clone());
+            let (proxy, latest, visual, auto_compile) = (
+                proxy.clone(),
+                latest.clone(),
+                visual.clone(),
+                auto_compile.clone(),
+            );
             Closure::<dyn FnMut()>::new(move || {
                 let _ = proxy.send_event(UserEvent::ShaderEdited {
                     visual: visual.get(),
                     source: latest.borrow().clone(),
+                    compile: auto_compile.get(),
+                });
+            })
+        };
+        // Saves and recompiles the code now.
+        let compile_now: Rc<dyn Fn()> = {
+            let (proxy, latest, visual, pending) = (
+                proxy.clone(),
+                latest.clone(),
+                visual.clone(),
+                pending.clone(),
+            );
+            Rc::new(move || {
+                if let Some(timer) = pending.take() {
+                    web_sys::window().unwrap().clear_timeout_with_handle(timer);
+                }
+                let _ = proxy.send_event(UserEvent::ShaderEdited {
+                    visual: visual.get(),
+                    source: latest.borrow().clone(),
+                    compile: true,
                 });
             })
         };
@@ -80,7 +120,7 @@ impl Editor {
                 pending.set(timer.ok());
             }
         };
-        let code = code::create(&element(&document, "editor-body")?, {
+        let changed = {
             let (badge, latest) = (badge.clone(), latest.clone());
             move |source: String| {
                 let language = render::shader_language(&source);
@@ -89,7 +129,28 @@ impl Editor {
                 schedule_compile();
                 code::language_name(language).to_owned()
             }
+        };
+        let code = code::create(&element(&document, "editor-body")?, changed, {
+            let compile_now = compile_now.clone();
+            move || compile_now()
         });
+
+        on_click(&document, "editor-compile", {
+            let compile_now = compile_now.clone();
+            move || compile_now()
+        })?;
+        // Turning auto compile back on runs the code as it is now.
+        on_click(&document, "editor-auto", {
+            let (button, auto_compile, storage) =
+                (auto_button.clone(), auto_compile.clone(), storage.clone());
+            move || {
+                let on = !auto_compile.get();
+                set_auto_compile(&auto_compile, &button, storage.as_ref(), on);
+                if on {
+                    compile_now();
+                }
+            }
+        })?;
 
         let on_change = {
             let (proxy, visuals) = (proxy.clone(), visuals.clone());
@@ -260,12 +321,14 @@ impl Editor {
             builtin_count,
             delete: element(&document, "editor-delete")?,
             error: element(&document, "editor-error")?,
-            storage: window.local_storage().ok().flatten(),
+            storage,
             code,
             latest,
             badge,
             visual,
             pending,
+            auto_compile,
+            auto_button,
         })
     }
 
@@ -287,14 +350,32 @@ impl Editor {
         if let Some(timer) = self.pending.take() {
             web_sys::window().unwrap().clear_timeout_with_handle(timer);
         }
-        self.visual.set(visual);
         self.visuals.set_selected_index(visual as i32);
         self.delete.set_disabled(visual < self.builtin_count.get());
-        self.code.set_value(source);
+        // The same code again (e.g. after a GPU reset): keep the undo history.
+        if visual != self.visual.get() || self.code.value() != source {
+            self.code.set_value(source);
+        }
         let language = render::shader_language(source);
         self.code.set_language(code::language_name(language));
         show_language(&self.badge, language);
         *self.latest.borrow_mut() = source.to_owned();
+        self.visual.set(visual);
+    }
+
+    /// Whether edits run as soon as typing pauses. Remembered in the browser.
+    pub fn set_auto_compile(&self, on: bool) {
+        set_auto_compile(
+            &self.auto_compile,
+            &self.auto_button,
+            self.storage.as_ref(),
+            on,
+        );
+    }
+
+    /// Shows a short notice at the bottom of the page.
+    pub fn notify(&self, text: &str) {
+        notify(text);
     }
 
     /// Shows a compile error, or hides it with `None`.
@@ -407,7 +488,7 @@ thread_local! {
     static NOTICE_TIMER: Cell<Option<i32>> = const { Cell::new(None) };
 }
 
-/// Shows a short notice at the bottom of the page for a few seconds.
+/// Shows a short notice at the bottom of the page, long enough to read it.
 pub fn notify(text: &str) {
     let window = web_sys::window().unwrap();
     let Some(notice) = window.document().unwrap().get_element_by_id("notice") else {
@@ -421,14 +502,36 @@ pub fn notify(text: &str) {
     let hide = Closure::once_into_js(move || {
         let _ = notice.class_list().remove_1("show");
     });
-    let timer =
-        window.set_timeout_with_callback_and_timeout_and_arguments_0(hide.unchecked_ref(), 3500);
+    let duration = (text.len() as i32 * 60).max(3500);
+    let timer = window
+        .set_timeout_with_callback_and_timeout_and_arguments_0(hide.unchecked_ref(), duration);
     NOTICE_TIMER.set(timer.ok());
 }
 
 /// Storage key of the list of visuals the user added; their sources are
 /// stored like edits, under [`storage_key`].
 const VISUALS_KEY: &str = "ongakue.visuals";
+
+/// Storage key of the auto compile setting: "on" or "off".
+const AUTO_COMPILE_KEY: &str = "ongakue.autocompile";
+
+fn set_auto_compile(
+    state: &Cell<bool>,
+    button: &HtmlButtonElement,
+    storage: Option<&Storage>,
+    on: bool,
+) {
+    state.set(on);
+    show_auto_compile(button, on);
+    if let Some(storage) = storage {
+        let _ = storage.set_item(AUTO_COMPILE_KEY, if on { "on" } else { "off" });
+    }
+}
+
+fn show_auto_compile(button: &HtmlButtonElement, on: bool) {
+    let _ = button.class_list().toggle_with_force("on", on);
+    let _ = button.set_attribute("aria-checked", if on { "true" } else { "false" });
+}
 
 /// Makes the browser download `text` as a file.
 fn download(file_name: &str, text: &str) -> Result<(), JsValue> {

@@ -35,4 +35,10 @@ impl Editor {
     pub fn take_shared_visual(&self) -> Option<(String, String)> {
         None
     }
+
+    pub fn set_auto_compile(&self, _on: bool) {}
+
+    pub fn notify(&self, text: &str) {
+        log::warn!("{text}");
+    }
 }

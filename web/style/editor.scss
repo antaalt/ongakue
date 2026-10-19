@@ -39,6 +39,52 @@
     font-size: 14px;
 }
 
+// Auto compile: a switch, its knob on the right and lit when on.
+#editor-header #editor-auto {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0;
+    border: none;
+    border-radius: 0;
+    background: none;
+    color: #aaa;
+    position: relative;
+    &::before {
+        content: "";
+        width: 30px;
+        height: 16px;
+        border: 2px solid #666;
+        border-radius: 10px;
+        transition: border-color .18s ease;
+    }
+    // The knob.
+    &::after {
+        content: "";
+        position: absolute;
+        top: calc(50% - 6px);
+        left: 4px;
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        background: #666;
+        transition: transform .18s ease, background .18s ease;
+    }
+    &:hover {
+        color: $text-color;
+    }
+    &.on {
+        color: $primary-color;
+        &::before {
+            border-color: $primary-color;
+        }
+        &::after {
+            transform: translateX(14px);
+            background: $primary-color;
+        }
+    }
+}
+
 // The code editor (CodeMirror, themed in web/codemirror/editor.js) fills it.
 #editor-body {
     display: flex;

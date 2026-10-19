@@ -6,7 +6,7 @@
 // the Rust side, through the `hooks` given to `create`.
 
 import { basicSetup } from "codemirror";
-import { EditorState, Compartment } from "@codemirror/state";
+import { EditorState, Compartment, Prec } from "@codemirror/state";
 import { EditorView, keymap, hoverTooltip } from "@codemirror/view";
 import { indentWithTab } from "@codemirror/commands";
 import { StreamLanguage, HighlightStyle, syntaxHighlighting, indentUnit } from "@codemirror/language";
@@ -117,6 +117,7 @@ export function viewOf(element) {
 }
 
 // `parent`: the element to fill. `hooks`: `changed(code)` after each edit,
+// `compile()` on Ctrl+Enter (Cmd+Enter on a Mac),
 // `complete(code, position)` and `hover(code, position)` (positions in UTF-16
 // units, like JavaScript strings), and `words`: per language, the lists of
 // keywords, types, functions and inputs to color.
@@ -155,6 +156,8 @@ export function create(parent, hooks) {
   const extensions = () => [
     basicSetup,
     keymap.of([indentWithTab]),
+    // Before the default keymap, where Ctrl+Enter inserts a line.
+    Prec.highest(keymap.of([{ key: "Mod-Enter", run: () => (hooks.compile(), true) }])),
     indentUnit.of("    "),
     EditorState.tabSize.of(4),
     language.of(languages[current]),
