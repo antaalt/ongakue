@@ -15,6 +15,9 @@ log.workspace = true
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 # WebGPU when the browser supports it, WebGL2 otherwise.
 wgpu = { workspace = true, features = ["webgpu", "webgl"] }
+# To create the WebGL2 context, asking for the discrete GPU.
+js-sys = "0.3"
+web-sys = { version = "0.3", features = ["HtmlCanvasElement"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 wgpu = { workspace = true, features = ["dx12", "metal", "vulkan"] }

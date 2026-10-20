@@ -75,6 +75,12 @@ impl App {
             return;
         };
         let size = window.inner_size();
+        // On the web, the canvas: the renderer picks the GPU for WebGL with it.
+        #[cfg(target_arch = "wasm32")]
+        let window = {
+            use winit::platform::web::WindowExtWebSys;
+            render::SurfaceTarget::Canvas(window.canvas().expect("the window has a canvas"))
+        };
         let init = Renderer::new(window, size.width, size.height);
         let proxy = self.proxy.clone();
 

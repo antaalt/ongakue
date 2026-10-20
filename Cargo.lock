@@ -1703,8 +1703,10 @@ version = "0.1.0"
 dependencies = [
  "analysis",
  "bytemuck",
+ "js-sys",
  "log",
  "naga",
+ "web-sys",
  "wgpu",
 ]
 

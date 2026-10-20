@@ -20,6 +20,9 @@ const COMMON_SHADER: &str = include_str!("shaders/common.wgsl");
 const GLSL_PRELUDE: &str = include_str!("shaders/common.glsl");
 const GLSL_MAIN: &str = include_str!("shaders/main.glsl");
 
+/// What a [`Renderer`] draws on, e.g. `SurfaceTarget::Canvas` on the web.
+pub use wgpu::SurfaceTarget;
+
 /// Built-in visuals: each is a fragment shader defining `fs_main`, selected
 /// with [`Renderer::set_visual`].
 const VISUALS: &[(&str, &str)] = &[
@@ -287,17 +290,49 @@ fn located_message(kind: &str, source: &str, location: Option<(usize, usize)>) -
     )
 }
 
+/// Without WebGPU, wgpu draws on the canvas with WebGL2, creating its context
+/// without a GPU preference: the browser may pick the integrated GPU. A
+/// canvas has a single context of a type, which later calls get whatever
+/// their options: create it first, asking for the discrete GPU. With wgpu's
+/// other option (`antialias: false`).
+#[cfg(target_arch = "wasm32")]
+fn prefer_discrete_gpu_for_webgl(canvas: &web_sys::HtmlCanvasElement) {
+    let options = js_sys::Object::new();
+    let _ = js_sys::Reflect::set(&options, &"antialias".into(), &false.into());
+    let _ = js_sys::Reflect::set(
+        &options,
+        &"powerPreference".into(),
+        &"high-performance".into(),
+    );
+    if canvas
+        .get_context_with_context_options("webgl2", &options)
+        .is_err()
+    {
+        log::warn!("couldn't create the WebGL2 context");
+    }
+}
+
 impl Renderer {
+    /// Draws on `target`: a canvas on the web.
     pub async fn new(
         target: impl Into<wgpu::SurfaceTarget<'static>>,
         width: u32,
         height: u32,
     ) -> Self {
+        let target = target.into();
         #[cfg(target_arch = "wasm32")]
-        let instance = wgpu::util::new_instance_with_webgpu_detection(
-            wgpu::InstanceDescriptor::new_without_display_handle(),
-        )
-        .await;
+        let instance = {
+            // Like `wgpu::util::new_instance_with_webgpu_detection`, deciding
+            // on WebGL2 here, before wgpu creates its context.
+            let mut descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
+            if !wgpu::util::is_browser_webgpu_supported().await {
+                descriptor.backends.remove(wgpu::Backends::BROWSER_WEBGPU);
+                if let wgpu::SurfaceTarget::Canvas(canvas) = &target {
+                    prefer_discrete_gpu_for_webgl(canvas);
+                }
+            }
+            wgpu::Instance::new(descriptor)
+        };
         #[cfg(not(target_arch = "wasm32"))]
         let instance =
             wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
