@@ -25,6 +25,19 @@ pub struct Target<'a> {
     /// Empty when the backend doesn't tell.
     pub gpu: &'a str,
     pub backend: &'a str,
+    /// Whether the GPU's time per frame is measured (not on WebGL2).
+    pub measures_gpu_time: bool,
+}
+
+/// The GPU's time per frame, e.g. "GPU 3.21 ms" or "GPU 12 µs" (fast GPUs
+/// draw simple visuals in microseconds), or why it's unknown.
+pub fn gpu_time(report: &FrameReport, target: &Target) -> String {
+    match report.gpu_ms {
+        Some(ms) if ms < 1.0 => format!("GPU {:.0} µs", ms * 1000.0),
+        Some(ms) => format!("GPU {ms:.2} ms"),
+        None if target.measures_gpu_time => "GPU …".to_owned(),
+        None => format!("GPU time not measurable on {}", target.backend),
+    }
 }
 
 /// The size to draw at: a fraction of the window's, at least a pixel. The
@@ -46,5 +59,35 @@ mod tests {
         assert_eq!(scaled(1583, 805, 0.25), (396, 201));
         // Never empty, even for a collapsed window.
         assert_eq!(scaled(0, 1, 0.25), (1, 1));
+    }
+
+    #[test]
+    fn gpu_time_in_readable_units() {
+        let target = |measures_gpu_time| Target {
+            width: 800,
+            height: 600,
+            scale: 1.0,
+            gpu: "",
+            backend: "WebGL2",
+            measures_gpu_time,
+        };
+        let report = |gpu_ms| FrameReport {
+            fps: 60.0,
+            frame_ms: 16.7,
+            worst_ms: 17.0,
+            analysis_ms: 0.2,
+            draw_ms: 0.2,
+            gpu_ms,
+        };
+        assert_eq!(
+            gpu_time(&report(Some(12.345)), &target(true)),
+            "GPU 12.35 ms"
+        );
+        assert_eq!(gpu_time(&report(Some(0.0123)), &target(true)), "GPU 12 µs");
+        assert_eq!(gpu_time(&report(None), &target(true)), "GPU …");
+        assert_eq!(
+            gpu_time(&report(None), &target(false)),
+            "GPU time not measurable on WebGL2"
+        );
     }
 }

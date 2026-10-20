@@ -343,10 +343,12 @@ impl ApplicationHandler<UserEvent> for App {
                     renderer.render(spectrum, time);
                 }
                 let drawn = Instant::now();
+                let gpu = self.renderer.as_mut().and_then(Renderer::take_gpu_time);
                 let report = self.meter.record(
                     interval,
                     (analyzed - now).as_secs_f32(),
                     (drawn - analyzed).as_secs_f32(),
+                    gpu,
                 );
                 if let (Some(report), Some(renderer), Some(window)) =
                     (report, &self.renderer, &self.window)
@@ -358,6 +360,7 @@ impl ApplicationHandler<UserEvent> for App {
                         scale: self.scale,
                         gpu: renderer.gpu_name(),
                         backend: renderer.backend_name(),
+                        measures_gpu_time: renderer.measures_gpu_time(),
                     };
                     self.stats.show(&report, &target, window);
                 }

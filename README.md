@@ -40,8 +40,9 @@ Live version: https://antaalt.github.io/ongakue/ (deployed from `main` by GitHub
   visual), and **Delete** (🗑) removes the ones you added. Visuals can be written in **WGSL** (`fs_main`) or
   in **GLSL**, Shadertoy style (`mainImage`, with `iTime` and `iResolution`):
   many Shadertoy shaders work as pasted (see the built-in "glsl" visual)
-- **Stats** shows the frame rate, frame times (average and worst), the CPU
-  time to analyze the sound and to submit each frame, the size drawn at, and
+- **Stats** shows the frame rate, frame times (average and worst), the GPU's
+  time to draw a frame (measured with timestamps: WebGPU and native, not
+  WebGL2), the CPU time to analyze the sound and to submit each frame, the size drawn at, and
   the GPU and API in use (WebGPU or WebGL2). Natively, they're in the title.
   Its **Resolution** slider draws at a fraction of the window's size (25 to
   100 %), stretched to fill it: at 50 % the GPU draws a quarter of the

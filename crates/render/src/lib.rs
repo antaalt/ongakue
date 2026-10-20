@@ -8,6 +8,7 @@ use analysis::{BAND_COUNT, Spectrum};
 use bytemuck::{Pod, Zeroable};
 
 mod guard;
+mod timer;
 pub use guard::MAX_ITERATIONS;
 
 /// Code shared by all visuals. Appended after each visual's code, so errors
@@ -93,6 +94,10 @@ pub struct Renderer {
     lost: Arc<AtomicBool>,
     /// The GPU and the API drawing on it.
     adapter: wgpu::AdapterInfo,
+    /// Measures the GPU's time per frame, where the backend can.
+    timer: Option<timer::GpuTimer>,
+    /// The last GPU time measured, in seconds, until taken.
+    gpu_time: Option<f32>,
 }
 
 /// Why a shader doesn't compile.
@@ -357,6 +362,8 @@ impl Renderer {
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: None,
+                // For the GPU's time per frame, where available (not WebGL2).
+                required_features: adapter.features() & wgpu::Features::TIMESTAMP_QUERY,
                 // WebGL2 is the lowest common denominator we target.
                 required_limits: wgpu::Limits::downlevel_webgl2_defaults()
                     .using_resolution(adapter.limits()),
@@ -421,6 +428,7 @@ impl Renderer {
             ..Default::default()
         });
 
+        let gpu_timer = timer::GpuTimer::new(&device, &queue);
         let mut renderer = Self {
             surface,
             device,
@@ -436,6 +444,8 @@ impl Renderer {
             controls: [0.0; MIDI_COUNT],
             lost,
             adapter: adapter_info,
+            timer: gpu_timer,
+            gpu_time: None,
         };
         renderer.visuals = VISUALS
             .iter()
@@ -500,6 +510,18 @@ impl Renderer {
             wgpu::Backend::Dx12 => "Direct3D 12",
             _ => "no GPU",
         }
+    }
+
+    /// Whether [`Renderer::take_gpu_time`] measures anything: WebGPU and
+    /// native backends can, WebGL2 can't.
+    pub fn measures_gpu_time(&self) -> bool {
+        self.timer.is_some()
+    }
+
+    /// The GPU's time to draw the last frame measured, in seconds, once per
+    /// measurement (they arrive a few frames late, and not for every frame).
+    pub fn take_gpu_time(&mut self) -> Option<f32> {
+        self.gpu_time.take()
     }
 
     /// The size drawn at, in pixels.
@@ -636,6 +658,12 @@ impl Renderer {
         if self.is_lost() {
             return;
         }
+        // Natively, callbacks (here the timer's readback) run when polled; on
+        // the web this does nothing, the browser runs them.
+        let _ = self.device.poll(wgpu::PollType::Poll);
+        if let Some(seconds) = self.timer.as_mut().and_then(timer::GpuTimer::read) {
+            self.gpu_time = Some(seconds);
+        }
         let (frame, suboptimal) = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame) => (frame, false),
             wgpu::CurrentSurfaceTexture::Suboptimal(frame) => (frame, true),
@@ -687,6 +715,7 @@ impl Renderer {
                         store: wgpu::StoreOp::Store,
                     },
                 })],
+                timestamp_writes: self.timer.as_ref().map(timer::GpuTimer::timestamp_writes),
                 ..Default::default()
             });
             if let Some(pipeline) = &self.visuals[self.visual].pipeline {
@@ -695,7 +724,13 @@ impl Renderer {
             pass.set_bind_group(0, &self.bind_group, &[]);
             pass.draw(0..3, 0..1);
         }
+        if let Some(timer) = &mut self.timer {
+            timer.resolve(&mut encoder);
+        }
         self.queue.submit([encoder.finish()]);
+        if let Some(timer) = &mut self.timer {
+            timer.submitted();
+        }
         self.queue.present(frame);
 
         if suboptimal {

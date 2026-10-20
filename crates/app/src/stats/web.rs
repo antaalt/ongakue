@@ -114,12 +114,14 @@ impl Stats {
         };
         self.text.set_text_content(Some(&format!(
             "{:.0} fps · {:.1} ms (worst {:.1})\n\
-             analysis {:.2} ms · draw {:.2} ms\n\
+             {}\n\
+             CPU: analysis {:.2} ms · draw {:.2} ms\n\
              {} × {} ({:.0} % of the window)\n\
              {gpu} · {}",
             report.fps,
             report.frame_ms,
             report.worst_ms,
+            super::gpu_time(report, target),
             report.analysis_ms,
             report.draw_ms,
             target.width,

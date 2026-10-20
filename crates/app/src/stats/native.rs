@@ -18,10 +18,11 @@ impl Stats {
 
     pub fn show(&self, report: &FrameReport, target: &Target, window: &Window) {
         window.set_title(&format!(
-            "Ongakue · {:.0} fps, {:.1} ms (worst {:.1}) · {} × {}{} · {} · {}",
+            "Ongakue · {:.0} fps, {:.1} ms (worst {:.1}) · {} · {} × {}{} · {} · {}",
             report.fps,
             report.frame_ms,
             report.worst_ms,
+            super::gpu_time(report, target),
             target.width,
             target.height,
             if target.scale < 1.0 {
