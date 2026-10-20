@@ -21,7 +21,8 @@ const SCALE_KEY: &str = "ongakue.resolution";
 pub struct Stats {
     text: HtmlElement,
     visible: Rc<Cell<bool>>,
-    /// The size drawn at, from the window's: 0.25 to 1.
+    /// The size drawn at, from the window's: 0.25 to 2 (above 1, the
+    /// browser shrinks the result to the window: supersampling).
     scale: Rc<Cell<f32>>,
     /// The GPU as WebGPU names it, when wgpu doesn't: e.g. "nvidia ampere".
     webgpu_name: Rc<RefCell<String>>,
@@ -44,7 +45,7 @@ impl Stats {
             .and_then(|storage| storage.get_item(SCALE_KEY).ok().flatten())
             .and_then(|value| value.parse::<f32>().ok())
             .unwrap_or(100.0)
-            .clamp(25.0, 100.0);
+            .clamp(25.0, 200.0);
         slider.set_value(&percent.to_string());
         slider_value.set_text_content(Some(&format!("{percent:.0} %")));
         let scale = Rc::new(Cell::new(percent / 100.0));
@@ -98,7 +99,7 @@ impl Stats {
         })
     }
 
-    /// The size to draw at, from the window's: 0.25 to 1.
+    /// The size to draw at, from the window's: 0.25 to 2.
     pub fn scale(&self) -> f32 {
         self.scale.get()
     }

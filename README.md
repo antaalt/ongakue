@@ -44,9 +44,10 @@ Live version: https://antaalt.github.io/ongakue/ (deployed from `main` by GitHub
   time to draw a frame (measured with timestamps: WebGPU and native, not
   WebGL2), the CPU time to analyze the sound and to submit each frame, the size drawn at, and
   the GPU and API in use (WebGPU or WebGL2). Natively, they're in the title.
-  Its **Resolution** slider draws at a fraction of the window's size (25 to
-  100 %), stretched to fill it: at 50 % the GPU draws a quarter of the
-  pixels, for slower GPUs
+  Its **Resolution** slider draws at 25 to 200 % of the window's size,
+  stretched to fill it: at 50 % the GPU draws a quarter of the pixels, for
+  slower GPUs. Above 100 %, it supersamples: smoother edges, for more pixels
+  to draw (4 times as many at 200 %)
 - **Tuning** opens sliders for the analysis settings and the shaders' free
   parameters (`u.params`), with a live plot of the beat detection. Each
   parameter's **MIDI** button links it to a knob: click it, then turn the knob

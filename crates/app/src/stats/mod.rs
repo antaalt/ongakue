@@ -40,9 +40,10 @@ pub fn gpu_time(report: &FrameReport, target: &Target) -> String {
     }
 }
 
-/// The size to draw at: a fraction of the window's, at least a pixel. The
-/// GPU runs the visual for each pixel, so at half the size it draws a
-/// quarter of them; the browser stretches the canvas back to the window.
+/// The size to draw at, scaled from the window's, at least a pixel. The GPU
+/// runs the visual for each pixel, so at half the size it draws a quarter of
+/// them, and the browser stretches the canvas back to the window. Above 1,
+/// the browser shrinks it instead: smoother edges, for more pixels to draw.
 pub fn scaled(width: u32, height: u32, scale: f32) -> (u32, u32) {
     let scale = |size: u32| ((size as f32 * scale).round() as u32).max(1);
     (scale(width), scale(height))
@@ -57,6 +58,8 @@ mod tests {
         assert_eq!(scaled(1920, 1080, 1.0), (1920, 1080));
         assert_eq!(scaled(1920, 1080, 0.5), (960, 540));
         assert_eq!(scaled(1583, 805, 0.25), (396, 201));
+        // Supersampling.
+        assert_eq!(scaled(1920, 1080, 2.0), (3840, 2160));
         // Never empty, even for a collapsed window.
         assert_eq!(scaled(0, 1, 0.25), (1, 1));
     }

@@ -319,6 +319,17 @@ fn prefer_discrete_gpu_for_webgl(canvas: &web_sys::HtmlCanvasElement) {
     }
 }
 
+/// `width` × `height`, shrunk to fit in `max` × `max` if needed, keeping its
+/// shape.
+fn fit(width: u32, height: u32, max: u32) -> (u32, u32) {
+    let largest = width.max(height);
+    if largest <= max {
+        return (width, height);
+    }
+    let shrink = |size: u32| ((size as u64 * max as u64 / largest as u64) as u32).max(1);
+    (shrink(width), shrink(height))
+}
+
 impl Renderer {
     /// Draws on `target`: a canvas on the web.
     pub async fn new(
@@ -529,10 +540,14 @@ impl Renderer {
         (self.config.width, self.config.height)
     }
 
+    /// Draws at `width` × `height` pixels, or the largest size of the same
+    /// shape the GPU allows (drawing above the window's size, to supersample,
+    /// can go past it).
     pub fn resize(&mut self, width: u32, height: u32) {
         if width == 0 || height == 0 {
             return;
         }
+        let (width, height) = fit(width, height, self.device.limits().max_texture_dimension_2d);
         self.config.width = width;
         self.config.height = height;
         self.surface.configure(&self.device, &self.config);
@@ -1012,6 +1027,14 @@ fn fs_main(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
                 "{name}: {stages:?}"
             );
         }
+    }
+
+    #[test]
+    fn sizes_fit_the_gpu() {
+        assert_eq!(fit(1920, 1080, 8192), (1920, 1080));
+        // A 4K window at 200 %, on a GPU limited to 4096 pixels.
+        assert_eq!(fit(7680, 4320, 4096), (4096, 2304));
+        assert_eq!(fit(1000, 9000, 4096), (455, 4096));
     }
 
     #[test]
