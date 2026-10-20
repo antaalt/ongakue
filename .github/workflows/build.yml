@@ -1,0 +1,25 @@
+name: Test wasi
+
+on:
+    push:
+      branches: [ "main" ]
+    pull_request:
+      branches: [ "main" ]
+    workflow_call:
+
+env:
+  CARGO_TERM_COLOR: always
+  
+jobs:
+  
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Check formatting
+        run: cargo fmt --check
+      - name: Run test
+        run: cargo test -- --nocapture
