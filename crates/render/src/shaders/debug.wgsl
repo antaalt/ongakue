@@ -87,20 +87,14 @@ fn number(fp: vec2<i32>, origin: vec2<i32>, value: f32, decimals: u32) -> bool {
     return glyph(code, cell.yz);
 }
 
-// One "LABEL  0.42  [bar]" row; alpha 0 where nothing is drawn.
-fn value_row(fp: vec2<i32>, y: i32, a: u32, b: u32, len: u32, value: f32, tint: vec3<f32>) -> vec4<f32> {
-    if fp.y < y || fp.y >= y + 5 {
+// A value bar, from x = WIDTH - BAR, on a row of text at `y`.
+fn bar(fp: vec2<i32>, y: i32, value: f32, tint: vec3<f32>) -> vec4<f32> {
+    let x = fp.x - (WIDTH - BAR);
+    if fp.y < y || fp.y >= y + 5 || x < 0 || x >= BAR {
         return vec4<f32>(0.0);
     }
-    if text(fp, vec2<i32>(0, y), a, b, len) || number(fp, vec2<i32>(40, y), value, 2u) {
-        return vec4<f32>(INK, 1.0);
-    }
-    let x = fp.x - (WIDTH - BAR);
-    if x >= 0 && x < BAR {
-        let filled = f32(x) < clamp(value, 0.0, 1.0) * f32(BAR);
-        return vec4<f32>(select(tint * 0.15, tint, filled), 1.0);
-    }
-    return vec4<f32>(0.0);
+    let filled = f32(x) < clamp(value, 0.0, 1.0) * f32(BAR);
+    return vec4<f32>(select(tint * 0.15, tint, filled), 1.0);
 }
 
 fn max_alpha(a: vec4<f32>, b: vec4<f32>) -> vec4<f32> {
@@ -131,34 +125,66 @@ fn fs_main(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     let fp = vec2<i32>(floor((position.xy - vec2<f32>(left, 80.0)) / size));
     var rows = vec4<f32>(0.0);
 
-    // TIME (seconds) and RES (pixels)
-    if text(fp, vec2<i32>(0, 0), 0x0039649du, 0x00000000u, 4u) || number(fp, vec2<i32>(40, 0), u.time, 2u)
-        || text(fp, vec2<i32>(0, 8), 0x0001c39bu, 0x00000000u, 3u) || number(fp, vec2<i32>(40, 8), u.resolution.x, 0u)
-        || text(fp, vec2<i32>(64, 8), 0x00000021u, 0x00000000u, 1u) || number(fp, vec2<i32>(72, 8), u.resolution.y, 0u) {
-        rows = vec4<f32>(INK, 1.0);
+    // The label, number and bar of the row the pixel is on, so that each pixel
+    // draws one label and one number: drawing every row with its own calls is
+    // too much for compilers that inline them all (Direct3D's, which WebGL
+    // uses on Windows, gives up and loses the GPU context).
+    var label = vec3<u32>(0u); // Characters, packed in two words, and count.
+    var label_x = 0;
+    var value = 0.0;
+    var decimals = 2u;
+    var number_x = 40;
+    var has_number = true;
+    var tint = vec3<f32>(0.0); // The value bar's color, black for none.
+    var y = (fp.y / 8) * 8;
+    switch fp.y / 8 {
+        // TIME, in seconds
+        case 0: { label = vec3<u32>(0x0039649du, 0u, 4u); value = u.time; }
+        // RES, in pixels: width X height
+        case 1: {
+            label = vec3<u32>(0x0001c39bu, 0u, 3u);
+            value = u.resolution.x;
+            decimals = 0u;
+            if fp.x >= 64 {
+                label = vec3<u32>(0x00000021u, 0u, 1u);
+                label_x = 64;
+                value = u.resolution.y;
+                number_x = 72;
+            }
+        }
+        // BEAT, BASS, MID, TREBLE
+        case 2: { label = vec3<u32>(0x0074a38bu, 0u, 4u); value = u.beat; tint = vec3<f32>(1.0, 0.55, 0.2); }
+        case 3: { label = vec3<u32>(0x0071c28bu, 0u, 4u); value = u.bass; tint = vec3<f32>(0.3, 0.5, 1.0); }
+        case 4: { label = vec3<u32>(0x0000d496u, 0u, 3u); value = u.mid; tint = vec3<f32>(0.3, 0.9, 0.5); }
+        case 5: { label = vec3<u32>(0x152ce6ddu, 0x0000000eu, 6u); value = u.treble; tint = vec3<f32>(1.0, 0.85, 0.3); }
+        // PARAMS.X to PARAMS.W
+        case 6: { label = vec3<u32>(0x1629b299u, 0x0002191cu, 8u); value = u.params.x; tint = vec3<f32>(0.8); }
+        case 7: { label = vec3<u32>(0x1629b299u, 0x0002291cu, 8u); value = u.params.y; tint = vec3<f32>(0.8); }
+        case 8: { label = vec3<u32>(0x1629b299u, 0x0002391cu, 8u); value = u.params.z; tint = vec3<f32>(0.8); }
+        case 9: { label = vec3<u32>(0x1629b299u, 0x0002091cu, 8u); value = u.params.w; tint = vec3<f32>(0.8); }
+        default: {
+            // Labels without a value: BANDS, NOTES and CC.
+            has_number = false;
+            if fp.y >= 82 && fp.y < 90 {
+                label = vec3<u32>(0x1c35728bu, 0x031a5026u, 10u);
+                y = 82;
+            } else if fp.y >= 136 && fp.y < 144 {
+                label = vec3<u32>(0x1c39d617u, 0u, 5u);
+                y = 136;
+            } else if fp.y >= 158 && fp.y < 166 {
+                label = vec3<u32>(0x0000030cu, 0u, 2u);
+                y = 158;
+            }
+        }
     }
-
-    // BEAT 
-    rows = max_alpha(rows, value_row(fp, 16, 0x0074a38bu, 0x00000000u, 4u, u.beat, vec3<f32>(1.0, 0.55, 0.2)));
-    // BASS 
-    rows = max_alpha(rows, value_row(fp, 24, 0x0071c28bu, 0x00000000u, 4u, u.bass, vec3<f32>(0.3, 0.5, 1.0)));
-    // MID 
-    rows = max_alpha(rows, value_row(fp, 32, 0x0000d496u, 0x00000000u, 3u, u.mid, vec3<f32>(0.3, 0.9, 0.5)));
-    // TREBLE 
-    rows = max_alpha(rows, value_row(fp, 40, 0x152ce6ddu, 0x0000000eu, 6u, u.treble, vec3<f32>(1.0, 0.85, 0.3)));
-    // PARAMS.X 
-    rows = max_alpha(rows, value_row(fp, 48, 0x1629b299u, 0x0002191cu, 8u, u.params.x, vec3<f32>(0.8, 0.8, 0.8)));
-    // PARAMS.Y 
-    rows = max_alpha(rows, value_row(fp, 56, 0x1629b299u, 0x0002291cu, 8u, u.params.y, vec3<f32>(0.8, 0.8, 0.8)));
-    // PARAMS.Z 
-    rows = max_alpha(rows, value_row(fp, 64, 0x1629b299u, 0x0002391cu, 8u, u.params.z, vec3<f32>(0.8, 0.8, 0.8)));
-    // PARAMS.W 
-    rows = max_alpha(rows, value_row(fp, 72, 0x1629b299u, 0x0002091cu, 8u, u.params.w, vec3<f32>(0.8, 0.8, 0.8)));
+    if text(fp, vec2<i32>(label_x, y), label.x, label.y, label.z)
+        || (has_number && number(fp, vec2<i32>(number_x, y), value, decimals)) {
+        rows = vec4<f32>(INK, 1.0);
+    } else if any(tint > vec3<f32>(0.0)) {
+        rows = bar(fp, y, value, tint);
+    }
 
     // BANDS: 64 bars, low frequencies on the left.
-    if text(fp, vec2<i32>(0, 82), 0x1c35728bu, 0x031a5026u, 10u) {
-        rows = vec4<f32>(INK, 1.0);
-    }
     let chart_bottom = 90 + 40;
     if fp.x >= 0 && fp.x < WIDTH && fp.y >= 90 && fp.y < chart_bottom {
         let i = u32(fp.x / 2);
@@ -171,9 +197,6 @@ fn fs_main(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     }
 
     // NOTES and CC: one cell per MIDI note / controller, 0 to 127.
-    if text(fp, vec2<i32>(0, 136), 0x1c39d617u, 0x00000000u, 5u) || text(fp, vec2<i32>(0, 158), 0x0000030cu, 0x00000000u, 2u) {
-        rows = vec4<f32>(INK, 1.0);
-    }
     rows = max_alpha(rows, strip(fp, 144, note(u32(max(fp.x, 0))), vec3<f32>(1.0, 0.4, 0.6)));
     rows = max_alpha(rows, strip(fp, 166, cc(u32(max(fp.x, 0))), vec3<f32>(0.4, 0.9, 1.0)));
 

@@ -60,10 +60,16 @@ struct Visual {
     /// The original source of a built-in visual; `None` for visuals added
     /// with [`Renderer::add_visual`].
     builtin: Option<&'static str>,
-    /// The source as last edited. It may not compile, in which case
-    /// `pipeline` still holds the last version that did.
+    /// The source as last edited. It may not compile, in which case the
+    /// visual runs the last version that did.
     source: String,
-    pipeline: wgpu::RenderPipeline,
+    /// The code the visual runs: the last version that compiled, or a safe
+    /// one (see [`Renderer::suspend_visual`]).
+    running: String,
+    /// Made from `running` when the visual is first drawn, not before: a
+    /// pipeline the GPU can't handle (some drivers lose the GPU context on
+    /// heavy shaders) then only breaks its own visual, not the app's start.
+    pipeline: Option<wgpu::RenderPipeline>,
 }
 
 pub struct Renderer {
@@ -398,7 +404,8 @@ impl Renderer {
                 name: name.to_owned(),
                 builtin: Some(builtin),
                 source: builtin.to_owned(),
-                pipeline: renderer.create_pipeline(name, builtin),
+                running: builtin.to_owned(),
+                pipeline: None,
             })
             .collect();
         renderer
@@ -481,17 +488,17 @@ impl Renderer {
     /// the template until its source is fixed.
     pub fn add_visual(&mut self, name: String, source: String) -> (usize, Result<(), ShaderError>) {
         let result = validate_shader(&source);
-        let working = if result.is_ok() {
-            &source
+        let running = if result.is_ok() {
+            source.clone()
         } else {
-            TEMPLATE_SHADER
+            TEMPLATE_SHADER.to_owned()
         };
-        let pipeline = self.create_pipeline(&name, working);
         self.visuals.push(Visual {
             name,
             builtin: None,
             source,
-            pipeline,
+            running,
+            pipeline: None,
         });
         (self.visuals.len() - 1, result)
     }
@@ -537,9 +544,9 @@ impl Renderer {
     /// of a built-in visual, the template for the others. For a visual whose
     /// code hung the GPU.
     pub fn suspend_visual(&mut self, index: usize) {
-        let visual = &self.visuals[index];
-        let safe = visual.builtin.unwrap_or(TEMPLATE_SHADER);
-        self.visuals[index].pipeline = self.create_pipeline(&visual.name, safe);
+        let visual = &mut self.visuals[index];
+        visual.running = visual.builtin.unwrap_or(TEMPLATE_SHADER).to_owned();
+        visual.pipeline = None;
     }
 
     /// Replaces a visual's source without running it: the visual keeps
@@ -552,10 +559,12 @@ impl Renderer {
     /// returned and the visual keeps running its last working version.
     pub fn set_visual_source(&mut self, index: usize, source: String) -> Result<(), ShaderError> {
         let result = validate_shader(&source);
+        let visual = &mut self.visuals[index];
         if result.is_ok() {
-            self.visuals[index].pipeline = self.create_pipeline(&self.visuals[index].name, &source);
+            visual.running = source.clone();
+            visual.pipeline = None;
         }
-        self.visuals[index].source = source;
+        visual.source = source;
         result
     }
 
@@ -577,6 +586,11 @@ impl Renderer {
         let view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
+        let visual = &self.visuals[self.visual];
+        if visual.pipeline.is_none() {
+            let pipeline = self.create_pipeline(&visual.name, &visual.running);
+            self.visuals[self.visual].pipeline = Some(pipeline);
+        }
 
         let mut uniforms = Uniforms {
             bands: [[0.0; 4]; BAND_COUNT / 4],
@@ -612,7 +626,9 @@ impl Renderer {
                 })],
                 ..Default::default()
             });
-            pass.set_pipeline(&self.visuals[self.visual].pipeline);
+            if let Some(pipeline) = &self.visuals[self.visual].pipeline {
+                pass.set_pipeline(pipeline);
+            }
             pass.set_bind_group(0, &self.bind_group, &[]);
             pass.draw(0..3, 0..1);
         }
@@ -833,6 +849,71 @@ fn fs_main(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
         naga::front::glsl::Frontend::default()
             .parse(&options, &glsl)
             .unwrap_or_else(|e| panic!("{e:?}"));
+    }
+
+    /// The GLSL ES 3.0 that wgpu's WebGL2 / OpenGL ES backend makes of a
+    /// visual, per stage: translated by naga with the same options.
+    fn webgl2_glsl(source: &str) -> Vec<(naga::ShaderStage, String)> {
+        let wgsl = compile(source).unwrap_or_else(|e| panic!("{e}"));
+        let module = naga::front::wgsl::parse_str(&wgsl).unwrap();
+        let info = validate(&module).unwrap();
+        let mut binding_map = naga::back::glsl::BindingMap::default();
+        binding_map.insert(
+            naga::ResourceBinding {
+                group: 0,
+                binding: 0,
+            },
+            0,
+        );
+        let options = naga::back::glsl::Options {
+            version: naga::back::glsl::Version::Embedded {
+                version: 300,
+                is_webgl: true,
+            },
+            writer_flags: naga::back::glsl::WriterFlags::ADJUST_COORDINATE_SPACE
+                | naga::back::glsl::WriterFlags::FORCE_POINT_SIZE,
+            binding_map,
+            zero_initialize_workgroup_memory: true,
+        };
+        let policies = naga::proc::BoundsCheckPolicies::default();
+        module
+            .entry_points
+            .iter()
+            .map(|entry| {
+                let pipeline = naga::back::glsl::PipelineOptions {
+                    shader_stage: entry.stage,
+                    entry_point: entry.name.clone(),
+                    multiview: None,
+                };
+                let mut glsl = String::new();
+                naga::back::glsl::Writer::new(
+                    &mut glsl, &module, &info, &options, &pipeline, policies,
+                )
+                .and_then(|mut writer| writer.write())
+                .unwrap_or_else(|e| panic!("{} doesn't translate: {e}", entry.name));
+                (entry.stage, glsl)
+            })
+            .collect()
+    }
+
+    /// Where WebGPU isn't available (often with integrated GPUs), visuals run
+    /// on WebGL2, translated to GLSL ES. The browser's own compiler can still
+    /// reject heavy shaders (Direct3D's, behind WebGL on Windows, gave up on
+    /// the debug visual when it drew each label with its own calls): that
+    /// only shows in a browser.
+    #[test]
+    fn builtin_visuals_translate_for_webgl2() {
+        for (name, source) in VISUALS.iter().chain([&("template", TEMPLATE_SHADER)]) {
+            let stages: Vec<_> = webgl2_glsl(source)
+                .into_iter()
+                .map(|(stage, _)| stage)
+                .collect();
+            assert!(
+                stages.contains(&naga::ShaderStage::Vertex)
+                    && stages.contains(&naga::ShaderStage::Fragment),
+                "{name}: {stages:?}"
+            );
+        }
     }
 
     #[test]

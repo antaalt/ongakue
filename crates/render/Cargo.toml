@@ -18,3 +18,7 @@ wgpu = { workspace = true, features = ["webgpu", "webgl"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 wgpu = { workspace = true, features = ["dx12", "metal", "vulkan"] }
+
+[dev-dependencies]
+# Tests check that visuals translate to the GLSL of WebGL2, like wgpu does.
+naga = { version = "30", features = ["glsl-out"] }
