@@ -20,7 +20,31 @@ pub use web::*;
 pub struct Target<'a> {
     pub width: u32,
     pub height: u32,
+    /// The size drawn at, from the window's: see [`scaled`].
+    pub scale: f32,
     /// Empty when the backend doesn't tell.
     pub gpu: &'a str,
     pub backend: &'a str,
+}
+
+/// The size to draw at: a fraction of the window's, at least a pixel. The
+/// GPU runs the visual for each pixel, so at half the size it draws a
+/// quarter of them; the browser stretches the canvas back to the window.
+pub fn scaled(width: u32, height: u32, scale: f32) -> (u32, u32) {
+    let scale = |size: u32| ((size as f32 * scale).round() as u32).max(1);
+    (scale(width), scale(height))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scales_the_size() {
+        assert_eq!(scaled(1920, 1080, 1.0), (1920, 1080));
+        assert_eq!(scaled(1920, 1080, 0.5), (960, 540));
+        assert_eq!(scaled(1583, 805, 0.25), (396, 201));
+        // Never empty, even for a collapsed window.
+        assert_eq!(scaled(0, 1, 0.25), (1, 1));
+    }
 }

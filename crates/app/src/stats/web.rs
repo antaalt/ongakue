@@ -1,5 +1,5 @@
-//! The stats panel, shown with the "Stats" button. Its elements are defined
-//! in `index.html`.
+//! The stats panel, shown with the "Stats" button, with the resolution
+//! slider. Its elements are defined in `index.html`.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -7,17 +7,21 @@ use std::rc::Rc;
 use js_sys::{Function, Promise, Reflect};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
-use web_sys::{HtmlButtonElement, HtmlElement, Storage};
+use web_sys::{HtmlButtonElement, HtmlElement, HtmlInputElement, Storage};
 use winit::window::Window;
 
 use super::{FrameReport, Target};
 
 /// Storage key of whether the panel is shown: "on" or "off".
 const VISIBLE_KEY: &str = "ongakue.stats";
+/// Storage key of the resolution, in percent of the window's.
+const SCALE_KEY: &str = "ongakue.resolution";
 
 pub struct Stats {
-    panel: HtmlElement,
+    text: HtmlElement,
     visible: Rc<Cell<bool>>,
+    /// The size drawn at, from the window's: 0.25 to 1.
+    scale: Rc<Cell<f32>>,
     /// The GPU as WebGPU names it, when wgpu doesn't: e.g. "nvidia ampere".
     webgpu_name: Rc<RefCell<String>>,
 }
@@ -27,8 +31,35 @@ impl Stats {
         let window = web_sys::window().unwrap();
         let document = window.document().unwrap();
         let panel: HtmlElement = element(&document, "stats")?;
+        let text: HtmlElement = element(&document, "stats-text")?;
         let button: HtmlButtonElement = element(&document, "stats-toggle")?;
         let storage = window.local_storage().ok().flatten();
+
+        // The resolution slider, in percent.
+        let slider: HtmlInputElement = element(&document, "stats-resolution")?;
+        let slider_value: HtmlElement = element(&document, "stats-resolution-value")?;
+        let percent = storage
+            .as_ref()
+            .and_then(|storage| storage.get_item(SCALE_KEY).ok().flatten())
+            .and_then(|value| value.parse::<f32>().ok())
+            .unwrap_or(100.0)
+            .clamp(25.0, 100.0);
+        slider.set_value(&percent.to_string());
+        slider_value.set_text_content(Some(&format!("{percent:.0} %")));
+        let scale = Rc::new(Cell::new(percent / 100.0));
+        let on_input = {
+            let (slider, scale, storage) = (slider.clone(), scale.clone(), storage.clone());
+            Closure::<dyn FnMut()>::new(move || {
+                let percent = slider.value_as_number() as f32;
+                scale.set(percent / 100.0);
+                slider_value.set_text_content(Some(&format!("{percent:.0} %")));
+                if let Some(storage) = &storage {
+                    let _ = storage.set_item(SCALE_KEY, &percent.to_string());
+                }
+            })
+        };
+        slider.set_oninput(Some(on_input.as_ref().unchecked_ref()));
+        on_input.forget();
         let visible = Rc::new(Cell::new(
             storage
                 .as_ref()
@@ -59,10 +90,16 @@ impl Stats {
             }
         });
         Ok(Self {
-            panel,
+            text,
             visible,
+            scale,
             webgpu_name,
         })
+    }
+
+    /// The size to draw at, from the window's: 0.25 to 1.
+    pub fn scale(&self) -> f32 {
+        self.scale.get()
     }
 
     pub fn show(&self, report: &FrameReport, target: &Target, _window: &Window) {
@@ -75,10 +112,10 @@ impl Stats {
             ("", name) => name,
             (name, _) => name,
         };
-        self.panel.set_text_content(Some(&format!(
+        self.text.set_text_content(Some(&format!(
             "{:.0} fps · {:.1} ms (worst {:.1})\n\
              analysis {:.2} ms · draw {:.2} ms\n\
-             {} × {}\n\
+             {} × {} ({:.0} % of the window)\n\
              {gpu} · {}",
             report.fps,
             report.frame_ms,
@@ -87,6 +124,7 @@ impl Stats {
             report.draw_ms,
             target.width,
             target.height,
+            target.scale * 100.0,
             target.backend,
         )));
     }

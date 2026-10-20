@@ -24,7 +24,14 @@
       <button id="stats-toggle" title="Show the frame rate, timings and GPU" aria-pressed="false">Stats</button>
     </div>
     <!-- Filled by crates/app/src/stats/web.rs. -->
-    <pre id="stats" hidden></pre>
+    <div id="stats" hidden>
+      <pre id="stats-text"></pre>
+      <label title="Draw at a fraction of the window's size, stretched to fill it: fewer pixels for the GPU to draw">
+        Resolution
+        <input type="range" id="stats-resolution" min="25" max="100" step="5" value="100" />
+        <span id="stats-resolution-value">100 %</span>
+      </label>
+    </div>
     <div id="tuning" class="window">
       <div id="tuning-header">
         <button id="tuning-reset">Reset to defaults</button>

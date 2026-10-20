@@ -51,6 +51,8 @@ struct App {
     analyzer: Analyzer,
     stats: stats::Stats,
     meter: stats::FrameMeter,
+    /// The resolution scale the renderer was last sized with.
+    scale: f32,
     start: Instant,
     last_frame: Instant,
     /// The visual that was showing when the GPU was reset, to run safely in
@@ -72,6 +74,16 @@ pub fn simulate_gpu_reset() {
 }
 
 impl App {
+    /// Sizes the renderer to the window, at the resolution scale.
+    fn resize_renderer(&mut self) {
+        self.scale = self.stats.scale();
+        if let (Some(window), Some(renderer)) = (&self.window, &mut self.renderer) {
+            let size = window.inner_size();
+            let (width, height) = stats::scaled(size.width, size.height, self.scale);
+            renderer.resize(width, height);
+        }
+    }
+
     /// Starts the GPU setup, which sends [`UserEvent::RendererReady`] when done.
     fn create_renderer(&self) {
         let Some(window) = self.window.clone() else {
@@ -177,7 +189,9 @@ impl ApplicationHandler<UserEvent> for App {
                 if let Some(window) = &self.window {
                     // The canvas may have been resized while we were initializing.
                     let size = window.inner_size();
-                    renderer.resize(size.width, size.height);
+                    self.scale = self.stats.scale();
+                    let (width, height) = stats::scaled(size.width, size.height, self.scale);
+                    renderer.resize(width, height);
                     window.request_redraw();
                 }
                 // Restore the shaders edited in previous sessions, then the
@@ -290,11 +304,7 @@ impl ApplicationHandler<UserEvent> for App {
         }
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
-            WindowEvent::Resized(size) => {
-                if let Some(renderer) = &mut self.renderer {
-                    renderer.resize(size.width, size.height);
-                }
-            }
+            WindowEvent::Resized(_) => self.resize_renderer(),
             WindowEvent::RedrawRequested => {
                 #[cfg(target_arch = "wasm32")]
                 if SIMULATE_GPU_RESET.take()
@@ -304,6 +314,10 @@ impl ApplicationHandler<UserEvent> for App {
                 }
                 if self.renderer.as_ref().is_some_and(Renderer::is_lost) {
                     self.recover_from_gpu_reset();
+                }
+                // The resolution slider moved.
+                if self.stats.scale() != self.scale {
+                    self.resize_renderer();
                 }
                 let now = Instant::now();
                 let interval = (now - self.last_frame).as_secs_f32();
@@ -341,6 +355,7 @@ impl ApplicationHandler<UserEvent> for App {
                     let target = stats::Target {
                         width,
                         height,
+                        scale: self.scale,
                         gpu: renderer.gpu_name(),
                         backend: renderer.backend_name(),
                     };
@@ -403,6 +418,7 @@ fn main() {
         samples: Box::new([0.0; audio::SAMPLE_COUNT]),
         stats,
         meter: stats::FrameMeter::default(),
+        scale: 1.0,
         start: Instant::now(),
         last_frame: Instant::now(),
         suspended: None,
