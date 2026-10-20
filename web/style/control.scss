@@ -1,3 +1,8 @@
+// The buttons opening a panel (Tune, Edit, Stats), lit while it's open.
+#controls button.on {
+    color: $text-color;
+    background: $primary-color;
+}
 
 #controls {
     position: absolute;

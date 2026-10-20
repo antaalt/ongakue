@@ -11,6 +11,7 @@ use web_sys::{HtmlButtonElement, HtmlElement, HtmlInputElement, Storage};
 use winit::window::Window;
 
 use super::{FrameReport, Target};
+use crate::panel::show_panel;
 
 /// Storage key of whether the panel is shown: "on" or "off".
 const VISIBLE_KEY: &str = "ongakue.stats";
@@ -67,13 +68,13 @@ impl Stats {
                 .as_deref()
                 == Some("on"),
         ));
-        show_visible(&panel, &button, visible.get());
+        show_panel(&panel, &button, visible.get());
 
         let on_click = {
             let (panel, button, visible) = (panel.clone(), button.clone(), visible.clone());
             Closure::<dyn FnMut()>::new(move || {
                 visible.set(!visible.get());
-                show_visible(&panel, &button, visible.get());
+                show_panel(&panel, &button, visible.get());
                 save(storage.as_ref(), visible.get());
             })
         };
@@ -130,12 +131,6 @@ impl Stats {
             target.backend,
         )));
     }
-}
-
-fn show_visible(panel: &HtmlElement, button: &HtmlButtonElement, visible: bool) {
-    panel.set_hidden(!visible);
-    let _ = button.class_list().toggle_with_force("on", visible);
-    let _ = button.set_attribute("aria-pressed", if visible { "true" } else { "false" });
 }
 
 fn save(storage: Option<&Storage>, visible: bool) {

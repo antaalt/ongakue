@@ -19,12 +19,12 @@
   </head>
   <body>
     <div id="controls">
-      <button id="tune" title="Tune the audio" aria-label="Edit audio">Tune</button>
-      <button id="edit" title="Edit shader" aria-label="Edit shader">Edit</button>
-      <button id="stats-toggle" title="Show the frame rate, timings and GPU" aria-pressed="false">Stats</button>
+      <button id="tune-toggle" title="Tune the audio" aria-label="Edit audio" aria-pressed="false">Tune</button>
+      <button id="edit-toggle" title="Edit shader" aria-label="Edit shader" aria-pressed="false">Edit</button>
+      <button id="stats-toggle" title="Show the frame rate, timings and GPU" aria-label="Show stats" aria-pressed="false">Stats</button>
     </div>
     <!-- Filled by crates/app/src/stats/web.rs. -->
-    <div id="stats" hidden>
+    <div id="stats">
       <pre id="stats-text"></pre>
       <label title="Draw at a fraction of the window's size, stretched to fill it: fewer pixels for the GPU to draw">
         Resolution

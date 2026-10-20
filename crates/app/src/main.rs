@@ -1,6 +1,8 @@
 mod audio;
 mod editor;
 mod midi;
+#[cfg(target_arch = "wasm32")]
+mod panel;
 mod piano;
 mod stats;
 mod tuning;

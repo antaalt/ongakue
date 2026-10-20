@@ -13,6 +13,7 @@ use std::collections::VecDeque;
 use std::rc::Rc;
 
 use crate::midi::MIDI_COUNT;
+use crate::panel::{is_open, show_panel};
 use analysis::Settings;
 use wasm_bindgen::prelude::*;
 use web_sys::{
@@ -212,18 +213,14 @@ impl Tuning {
                 }
             }
         })?;
+        let tune_button: HtmlElement = element(&document, "tune-toggle")?;
         on_click(&document, "tuning-close", {
-            let panel = panel.clone();
-            move || {
-                let panel = panel.clone();
-                let _ = panel.class_list().remove_1("open");
-            }
+            let (panel, button) = (panel.clone(), tune_button.clone());
+            move || show_panel(&panel, &button, false)
         })?;
-        on_click(&document, "tune", {
+        on_click(&document, "tune-toggle", {
             let panel = panel.clone();
-            move || {
-                let _ = panel.class_list().toggle("open");
-            }
+            move || show_panel(&panel, &tune_button, !is_open(&panel))
         })?;
 
         let canvas: HtmlCanvasElement = element(&document, "tuning-plot")?;

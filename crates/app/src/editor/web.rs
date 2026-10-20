@@ -20,6 +20,7 @@ use super::code::{self, CodeEditor};
 use super::names::{file_name, name_from_file, unique_name};
 use super::share;
 use crate::UserEvent;
+use crate::panel::{is_open, show_panel};
 use render::{ShaderError, TEMPLATE_SHADER};
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{Blob, BlobPropertyBag, HtmlAnchorElement, HtmlInputElement, Url};
@@ -296,18 +297,21 @@ impl Editor {
         panel.add_event_listener_with_callback("keydown", on_save.as_ref().unchecked_ref())?;
         on_save.forget();
 
-        on_click(&document, "edit", {
-            let (panel, code) = (panel.clone(), code.clone());
+        let edit_button: HtmlElement = element(&document, "edit-toggle")?;
+        on_click(&document, "edit-toggle", {
+            let (panel, button, code) = (panel.clone(), edit_button.clone(), code.clone());
             move || {
+                let open = !is_open(&panel);
+                show_panel(&panel, &button, open);
                 // The language server (a 16 MB download) starts the first time
                 // the editor is opened.
-                if panel.class_list().toggle("open").unwrap_or(false) {
+                if open {
                     code.start_language_server(SERVER_WORKER, SERVER_WASM);
                 }
             }
         })?;
         on_click(&document, "editor-close", move || {
-            let _ = panel.class_list().remove_1("open");
+            show_panel(&panel, &edit_button, false);
         })?;
         /*on_click(&document, "editor-reset", {
             let visual = visual.clone();

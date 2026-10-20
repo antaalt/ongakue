@@ -10,8 +10,9 @@
     background: $primary-background;
     color: $text-color;
     font: 12px/1.5 ui-monospace, Consolas, monospace;
-    &[hidden] {
-        display: none;
+    display: none;
+    &.open {
+        display: block;
     }
     pre {
         margin: 0;
@@ -27,10 +28,4 @@
         flex: 1;
         accent-color: $primary-color;
     }
-}
-
-// The button showing it, lit while it's shown.
-#stats-toggle.on {
-    color: $text-color;
-    background: $primary-color;
 }
