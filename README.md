@@ -40,6 +40,9 @@ Live version: https://antaalt.github.io/ongakue/ (deployed from `main` by GitHub
   visual), and **Delete** (🗑) removes the ones you added. Visuals can be written in **WGSL** (`fs_main`) or
   in **GLSL**, Shadertoy style (`mainImage`, with `iTime` and `iResolution`):
   many Shadertoy shaders work as pasted (see the built-in "glsl" visual)
+- **Stats** shows the frame rate, frame times (average and worst), the CPU
+  time to analyze the sound and to submit each frame, the size drawn at, and
+  the GPU and API in use (WebGPU or WebGL2). Natively, they're in the title
 - **Tuning** opens sliders for the analysis settings and the shaders' free
   parameters (`u.params`), with a live plot of the beat detection. Each
   parameter's **MIDI** button links it to a knob: click it, then turn the knob

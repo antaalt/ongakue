@@ -91,6 +91,8 @@ pub struct Renderer {
     /// Set when the GPU device is lost, e.g. reset by the system because a
     /// shader ran too long.
     lost: Arc<AtomicBool>,
+    /// The GPU and the API drawing on it.
+    adapter: wgpu::AdapterInfo,
 }
 
 /// Why a shader doesn't compile.
@@ -349,7 +351,8 @@ impl Renderer {
             })
             .await
             .expect("no suitable GPU adapter");
-        log::info!("using adapter: {:?}", adapter.get_info());
+        let adapter_info = adapter.get_info();
+        log::info!("using adapter: {adapter_info:?}");
 
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
@@ -432,6 +435,7 @@ impl Renderer {
             notes: [0.0; MIDI_COUNT],
             controls: [0.0; MIDI_COUNT],
             lost,
+            adapter: adapter_info,
         };
         renderer.visuals = VISUALS
             .iter()
@@ -477,6 +481,30 @@ impl Renderer {
                 multiview_mask: None,
                 cache: None,
             })
+    }
+
+    /// The GPU's name, empty when the backend doesn't tell (browsers'
+    /// WebGPU doesn't).
+    pub fn gpu_name(&self) -> &str {
+        &self.adapter.name
+    }
+
+    /// The API drawing on the GPU, e.g. "WebGPU" or "WebGL2".
+    pub fn backend_name(&self) -> &'static str {
+        match self.adapter.backend {
+            wgpu::Backend::BrowserWebGpu => "WebGPU",
+            wgpu::Backend::Gl if cfg!(target_arch = "wasm32") => "WebGL2",
+            wgpu::Backend::Gl => "OpenGL",
+            wgpu::Backend::Vulkan => "Vulkan",
+            wgpu::Backend::Metal => "Metal",
+            wgpu::Backend::Dx12 => "Direct3D 12",
+            _ => "no GPU",
+        }
+    }
+
+    /// The size drawn at, in pixels.
+    pub fn size(&self) -> (u32, u32) {
+        (self.config.width, self.config.height)
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {

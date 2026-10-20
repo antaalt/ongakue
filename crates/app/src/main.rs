@@ -2,6 +2,7 @@ mod audio;
 mod editor;
 mod midi;
 mod piano;
+mod stats;
 mod tuning;
 
 use std::sync::Arc;
@@ -48,6 +49,8 @@ struct App {
     piano: piano::Piano,
     samples: Box<[f32; audio::SAMPLE_COUNT]>,
     analyzer: Analyzer,
+    stats: stats::Stats,
+    meter: stats::FrameMeter,
     start: Instant,
     last_frame: Instant,
     /// The visual that was showing when the GPU was reset, to run safely in
@@ -303,8 +306,9 @@ impl ApplicationHandler<UserEvent> for App {
                     self.recover_from_gpu_reset();
                 }
                 let now = Instant::now();
+                let interval = (now - self.last_frame).as_secs_f32();
                 // Clamped, so a long pause (e.g. a hidden tab) doesn't make a jump.
-                let dt = (now - self.last_frame).as_secs_f32().min(0.1);
+                let dt = interval.min(0.1);
                 self.last_frame = now;
 
                 let midi = self.midi.frame(dt);
@@ -317,11 +321,30 @@ impl ApplicationHandler<UserEvent> for App {
                 let spectrum = self.analyzer.add_notes(&midi.notes);
                 let beat = spectrum.beat == 1.0;
                 let time = (now - self.start).as_secs_f32();
+                let analyzed = Instant::now();
 
                 if let Some(renderer) = &mut self.renderer {
                     renderer.set_params(self.tuning.params());
                     renderer.set_midi(&midi.notes, &midi.controls);
                     renderer.render(spectrum, time);
+                }
+                let drawn = Instant::now();
+                let report = self.meter.record(
+                    interval,
+                    (analyzed - now).as_secs_f32(),
+                    (drawn - analyzed).as_secs_f32(),
+                );
+                if let (Some(report), Some(renderer), Some(window)) =
+                    (report, &self.renderer, &self.window)
+                {
+                    let (width, height) = renderer.size();
+                    let target = stats::Target {
+                        width,
+                        height,
+                        gpu: renderer.gpu_name(),
+                        backend: renderer.backend_name(),
+                    };
+                    self.stats.show(&report, &target, window);
                 }
                 self.tuning.record(
                     time,
@@ -353,6 +376,7 @@ fn main() {
     let editor =
         editor::Editor::new(event_loop.create_proxy()).expect("failed to initialize editor");
     let tuning = tuning::Tuning::new().expect("failed to initialize the tuning panel");
+    let stats = stats::Stats::new().expect("failed to initialize the stats");
     let midi = midi::Midi::new().expect("failed to initialize MIDI");
     // The keyboard piano's notes go to MIDI and, on the web, to the synth.
     #[cfg(target_arch = "wasm32")]
@@ -377,6 +401,8 @@ fn main() {
         analyzer: Analyzer::new(audio.sample_rate(), audio::SAMPLE_COUNT),
         audio,
         samples: Box::new([0.0; audio::SAMPLE_COUNT]),
+        stats,
+        meter: stats::FrameMeter::default(),
         start: Instant::now(),
         last_frame: Instant::now(),
         suspended: None,
